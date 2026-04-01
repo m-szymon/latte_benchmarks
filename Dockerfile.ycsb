@@ -1,0 +1,20 @@
+# We use latte to create the schema and populate the table
+FROM rust:bookworm AS latte-builder
+RUN apt-get update && apt-get install -y git cmake
+RUN git clone -b develop https://github.com/scylladb-zpp-2025-alternator-rs-driver/latte.git /usr/src/latte
+WORKDIR /usr/src/latte
+RUN cargo build --release --no-default-features --features="alternator" --bin latte-alternator
+
+FROM eclipse-temurin:8-jre-jammy
+RUN apt-get update && apt-get install -y wget python2 curl python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=latte-builder /usr/src/latte/target/release/latte-alternator /usr/local/bin/latte-alternator
+RUN curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz && \
+    tar xfvz ycsb-0.17.0.tar.gz && mv ycsb-0.17.0 /ycsb
+WORKDIR /ycsb
+COPY performance.rn performance.rn
+COPY dynamodb.properties /ycsb/dynamodb.properties
+COPY AWSCredentials.properties /ycsb/AWSCredentials.properties
+COPY run-ycsb-benchmark.sh /usr/local/bin/run-benchmark.sh
+COPY analyze_ycsb_results.py /usr/local/bin/analyze_ycsb_results.py
+RUN chmod +x /usr/local/bin/run-benchmark.sh
+ENTRYPOINT ["/usr/local/bin/run-benchmark.sh"]
