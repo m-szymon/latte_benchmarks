@@ -47,6 +47,13 @@ def parse_latte_json(path):
             if real > 0:
                 cpu_usage = (user + sys_time) / real * 100
 
+    # Aggregate request_latency (service-time, not CO-corrected)
+    request_latency = result.get('request_latency', {})
+    req_mean = request_latency.get('mean', {}).get('value', 0)
+    req_percentiles = request_latency.get('percentiles', [])
+    req_p95 = req_percentiles[p95_idx].get('value', 0) if p95_idx < len(req_percentiles) else 0
+    req_p99 = req_percentiles[p99_idx].get('value', 0) if p99_idx < len(req_percentiles) else 0
+
     return {
         'throughput': throughput,
         'get_avg_ms': get_mean_value('get'),
@@ -55,6 +62,9 @@ def parse_latte_json(path):
         'update_avg_ms': get_mean_value('update'),
         'update_p95_ms': get_percentile_value('update', p95_idx),
         'update_p99_ms': get_percentile_value('update', p99_idx),
+        'request_avg_ms': req_mean,
+        'request_p95_ms': req_p95,
+        'request_p99_ms': req_p99,
         'cpu_usage': cpu_usage,
     }
 
@@ -79,4 +89,6 @@ if __name__ == '__main__':
         f'GET avg/p95/p99: {round(report["get_avg_ms"], 3)} / {round(report["get_p95_ms"], 3)} / {round(report["get_p99_ms"], 3)} ms')
     print(
         f'UPDATE avg/p95/p99: {round(report["update_avg_ms"], 3)} / {round(report["update_p95_ms"], 3)} / {round(report["update_p99_ms"], 3)} ms')
+    print(
+        f'REQUEST (agg) avg/p95/p99: {round(report["request_avg_ms"], 3)} / {round(report["request_p95_ms"], 3)} / {round(report["request_p99_ms"], 3)} ms')
     print(f'CPU usage: {round(report["cpu_usage"], 1)}%')

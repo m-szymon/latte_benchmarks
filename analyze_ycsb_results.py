@@ -27,6 +27,13 @@ def parse_y(path):
         'update_avg_ms': (g(t, r"\[UPDATE\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
         'update_p95_ms': (g(t, r"\[UPDATE\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
         'update_p99_ms': (g(t, r"\[UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        # Intended (CO-corrected) latency — present when -target (rate limit) is set
+        'intended_read_avg_ms': (g(t, r"\[Intended-READ\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        'intended_read_p95_ms': (g(t, r"\[Intended-READ\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        'intended_read_p99_ms': (g(t, r"\[Intended-READ\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        'intended_update_avg_ms': (g(t, r"\[Intended-UPDATE\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        'intended_update_p95_ms': (g(t, r"\[Intended-UPDATE\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
+        'intended_update_p99_ms': (g(t, r"\[Intended-UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
         'cpu_usage': cpu_usage,
     }
 
@@ -61,6 +68,16 @@ if __name__ == '__main__':
         f'READ avg/p95/p99: {fmt(report["read_avg_ms"])} / {fmt(report["read_p95_ms"])} / {fmt(report["read_p99_ms"])} ms')
     print(
         f'UPDATE avg/p95/p99: {fmt(report["update_avg_ms"])} / {fmt(report["update_p95_ms"])} / {fmt(report["update_p99_ms"])} ms')
+
+    # Intended (CO-corrected) latency
+    if report.get("intended_read_avg_ms", 0) > 0:
+        print(
+            f'Intended-READ avg/p95/p99: {fmt(report["intended_read_avg_ms"])} / {fmt(report["intended_read_p95_ms"])} / {fmt(report["intended_read_p99_ms"])} ms')
+        print(
+            f'Intended-UPDATE avg/p95/p99: {fmt(report["intended_update_avg_ms"])} / {fmt(report["intended_update_p95_ms"])} / {fmt(report["intended_update_p99_ms"])} ms')
+    else:
+        print('Intended latency: N/A (no rate limit set)')
+
 
     cpu_usage = report.get("cpu_usage")
     if cpu_usage is not None:

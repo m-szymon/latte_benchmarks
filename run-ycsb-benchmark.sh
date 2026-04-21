@@ -1,85 +1,85 @@
 #!/bin/bash
 set -euo pipefail
+#
+# run-ycsb-benchmark.sh — Runs YCSB measured pass inside scylladb/ycsb:1.3.0 container.
+# Schema + load is handled separately by the orchestrator.
+#
 
-ALT_ENDPOINT="${ALT_ENDPOINT:-http://172.17.0.2:8000}"
+ALT_ENDPOINT="${ALT_ENDPOINT:?ALT_ENDPOINT must be set}"
 TABLE="${TABLE:-latte_performance}"
 ROW_COUNT="${ROW_COUNT:-100000}"
-REQUEST_COUNT="${REQUEST_COUNT:-500000}"
-# YCSB uses less CPU per thread
-YCSB_THREADS="${YCSB_THREADS:-24}"
+YCSB_THREADS="${YCSB_THREADS:-64}"
 FIELDCOUNT="${FIELDCOUNT:-10}"
 FIELDLENGTH="${FIELDLENGTH:-512}"
-OUTDIR="${OUTDIR:-output}"
+OUTDIR="${OUTDIR:-/output}"
 RATE="${RATE:-}"
-LATTE_WORKLOAD="${LATTE_WORKLOAD:-performance.rn}"
+RUN_DURATION_SEC="${RUN_DURATION_SEC:-30}"
+WARMUP_SEC="${WARMUP_SEC:-0}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
 UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
+YCSB_JAVA_OPTS="${YCSB_JAVA_OPTS:-}"
+
+# Pass JVM options if provided (e.g. -Xmx8g -XX:+UseG1GC)
+if [ -n "$YCSB_JAVA_OPTS" ]; then
+  export JAVA_OPTS="$YCSB_JAVA_OPTS"
+fi
 
 mkdir -p "$OUTDIR"
 
-if ! awk -v read="$READ_PROPORTION" -v update="$UPDATE_PROPORTION" 'BEGIN {
-  if (read !~ /^([0-9]+([.][0-9]+)?|[.][0-9]+)$/) exit 1;
-  if (update !~ /^([0-9]+([.][0-9]+)?|[.][0-9]+)$/) exit 1;
-  if (read < 0 || read > 1 || update < 0 || update > 1) exit 1;
-  sum = read + update;
-  if (sum < 0.999999 || sum > 1.000001) exit 1;
-}'; then
-  echo "ERROR: READ_PROPORTION and UPDATE_PROPORTION must be numeric in [0,1] and sum to 1.0"
-  echo "Current values: READ_PROPORTION=$READ_PROPORTION UPDATE_PROPORTION=$UPDATE_PROPORTION"
-  exit 1
-fi
+COMMON_ARGS=(
+  -P "${YCSB_HOME:-/usr/local/share/scylla-ycsb}/workloads/workloada"
+  -threads "$YCSB_THREADS"
+  -p "table=$TABLE"
+  -p "recordcount=$ROW_COUNT"
+  -p "requestdistribution=uniform"
+  -p "readproportion=$READ_PROPORTION"
+  -p "updateproportion=$UPDATE_PROPORTION"
+  -p "insertproportion=0"
+  -p "scanproportion=0"
+  -p "readmodifywriteproportion=0"
+  -p "readallfields=true"
+  -p "writeallfields=false"
+  -p "fieldcount=$FIELDCOUNT"
+  -p "fieldlength=$FIELDLENGTH"
+  -p "fieldlengthdistribution=constant"
+  -p "dynamodb.primaryKey=pk"
+  -p "dynamodb.primaryKeyType=HASH"
+  -p "dynamodb.endpoint=$ALT_ENDPOINT"
+  -p "dynamodb.consistentReads=false"
+  -p "dynamodb.awsAccessKey=dummy"
+  -p "dynamodb.awsSecretKey=dummy"
+  -p "dynamodb.region=us-east-1"
+  -p "measurement.interval=both"
+)
 
-echo "Checking endpoint availability..."
-if ! curl -fsS -m 3 "$ALT_ENDPOINT" >/dev/null 2>&1; then
-  echo "ERROR: Alternator endpoint is not reachable: $ALT_ENDPOINT"
-  exit 1
-fi
-
-echo "[1/3] Schema + load using Latte"
-latte-alternator schema "$LATTE_WORKLOAD" "$ALT_ENDPOINT" -P "table=\"$TABLE\""
-latte-alternator load "$LATTE_WORKLOAD" "$ALT_ENDPOINT" \
-  -t "$YCSB_THREADS" -c 12 --concurrency 12 \
-  -P "table=\"$TABLE\"" \
-  -P "row_count=$ROW_COUNT" \
-  -P "fieldcount=$FIELDCOUNT" \
-  -P "fieldlength=$FIELDLENGTH" \
-  -P 'requestdistribution="uniform"' \
-  > "$OUTDIR/latte_load.log" 2>&1
-
-RATE_ARG=""
 if [ -n "$RATE" ]; then
-  RATE_ARG="-target $RATE"
+  COMMON_ARGS+=(-target "$RATE")
 fi
 
+COMMON_ARGS+=(-p "maxexecutiontime=$RUN_DURATION_SEC")
+COMMON_ARGS+=(-p "operationcount=999999999")
+
+echo "=== YCSB Benchmark ==="
+echo "Endpoint: $ALT_ENDPOINT"
+echo "Table: $TABLE | Rows: $ROW_COUNT | Threads: $YCSB_THREADS"
+echo "Duration: ${RUN_DURATION_SEC}s | Warmup: ${WARMUP_SEC}s | Rate: ${RATE:-unlimited}"
+echo
+
+# Warmup pass (discard output)
+if [ "$WARMUP_SEC" -gt 0 ]; then
+  echo "[1/2] Warmup pass (${WARMUP_SEC}s, discarded)..."
+  ycsb.sh run dynamodb \
+    "${COMMON_ARGS[@]}" \
+    -p "maxexecutiontime=$WARMUP_SEC" \
+    > /dev/null 2>&1 || true
+  echo "Warmup complete."
+fi
+
+# Measured run
+echo "[2/2] Measured run (${RUN_DURATION_SEC}s)..."
 export LC_ALL=C
 export TIMEFORMAT="TIMEFORMAT %R %U %S"
-
-echo "[2/3] Running YCSB benchmark"
-{ time python2 bin/ycsb run dynamodb \
-  -P workloads/workloada \
-  -P dynamodb.properties \
-  -threads "$YCSB_THREADS" \
-  $RATE_ARG \
-  -p "table=$TABLE" \
-  -p "recordcount=$ROW_COUNT" \
-  -p "operationcount=$REQUEST_COUNT" \
-  -p "requestdistribution=uniform" \
-  -p "readproportion=$READ_PROPORTION" \
-  -p "updateproportion=$UPDATE_PROPORTION" \
-  -p "insertproportion=0" \
-  -p "scanproportion=0" \
-  -p "readmodifywriteproportion=0" \
-  -p "readallfields=true" \
-  -p "writeallfields=false" \
-  -p "fieldcount=$FIELDCOUNT" \
-  -p "fieldlength=$FIELDLENGTH" \
-  -p "fieldlengthdistribution=constant" \
-  -p "dynamodb.primaryKey=pk" \
-  -p "dynamodb.primaryKeyType=HASH" \
-  -p "dynamodb.endpoint=$ALT_ENDPOINT" \
-  -p "dynamodb.consistentReads=false"; } \
+{ time ycsb.sh run dynamodb "${COMMON_ARGS[@]}"; } \
   > "$OUTDIR/ycsb_1.log" 2>&1
 
-python3 /usr/local/bin/analyze_ycsb_results.py "$OUTDIR"
-
-echo "[3/3] Done. Detailed results in: $OUTDIR"
+echo "Done. Results in: $OUTDIR/ycsb_1.log"
