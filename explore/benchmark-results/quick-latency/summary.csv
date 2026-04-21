@@ -1,0 +1,3 @@
+tool,inflight,rep,throughput_ops,read_avg_ms,read_p95_ms,read_p99_ms,update_avg_ms,update_p95_ms,update_p99_ms
+ycsb,32,1,4621.3,2.274,7.475,12.975,2.285,7.559,13.095
+latte,32,1,4999.1,1.542,2.859,3.449,1.458,2.777,3.324

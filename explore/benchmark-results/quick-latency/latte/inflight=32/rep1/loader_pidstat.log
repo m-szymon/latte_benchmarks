@@ -1,0 +1,33 @@
+Linux 6.17.0-1010-aws (ip-172-31-15-179) 	04/20/26 	_x86_64_	(8 CPU)
+
+10:20:32      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:20:37        0         1    0.20    0.20    0.00    0.00    0.40     7  systemd
+10:20:37      101       717    0.20    0.00    0.00    0.00    0.20     6  dbus-daemon
+10:20:37      102       837    0.20    0.00    0.00    0.00    0.20     0  rsyslogd
+10:20:37        0      1991    0.40    0.00    0.00    0.00    0.40     4  containerd
+10:20:37        0      2232    0.40    0.00    0.00    0.00    0.40     0  dockerd
+10:20:37     1000      4237    0.20    0.20    0.00    0.00    0.40     3  systemd
+10:20:37     1000      5108    0.00    0.20    0.00    0.00    0.20     5  pidstat
+10:20:37        0      5173    0.00    0.20    0.00    0.00    0.20     1  docker
+10:20:37        0      5215    0.20    0.00    0.00    0.00    0.20     6  run-benchmark.s
+10:20:37        0      5230   94.81   26.35    0.00    0.00  121.16     7  latte-alternato
+
+10:20:37      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:20:42        0      5230  109.60   30.60    0.00    0.00  140.20     2  latte-alternato
+
+10:20:42      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:20:47        0       105    0.00    0.20    0.00    0.20    0.20     2  kworker/2:1-mm_percpu_wq
+10:20:47        0      5230  109.60   31.00    0.00    0.00  140.60     6  latte-alternato
+
+10:20:47      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:20:52        0        92    0.00    0.20    0.00    0.00    0.20     1  kworker/1:1-mm_percpu_wq
+10:20:52        0      5230  108.80   31.00    0.00    0.00  139.80     6  latte-alternato
+
+10:20:52      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:20:57     1000      5108    0.00    0.20    0.00    0.00    0.20     5  pidstat
+10:20:57        0      5230  110.20   30.00    0.00    0.00  140.20     3  latte-alternato
+
+10:20:57      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+10:21:02        0      1991    0.20    0.00    0.00    0.00    0.20     4  containerd
+10:21:02     1000      5108    0.20    0.00    0.00    0.00    0.20     5  pidstat
+10:21:02        0      5230  106.20   33.40    0.00    0.00  139.60     5  latte-alternato

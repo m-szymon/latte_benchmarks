@@ -1,0 +1,104 @@
+/opt/java/openjdk/bin/java
+  -Djdk.attach.allowAttachSelf=true
+  --add-exports java.base/jdk.internal.misc=ALL-UNNAMED
+  --add-opens java.base/jdk.internal.module=ALL-UNNAMED
+  --add-opens=java.base/java.lang=ALL-UNNAMED
+  --add-opens=java.base/java.util=ALL-UNNAMED
+  --add-opens=java.base/java.io=ALL-UNNAMED
+  --add-opens java.base/java.net=ALL-UNNAMED
+  --add-opens java.base/sun.nio.ch=ALL-UNNAMED
+  --add-exports java.base/jdk.internal.ref=ALL-UNNAMED
+  --add-exports java.base/sun.nio.ch=ALL-UNNAMED
+  --add-exports java.management.rmi/com.sun.jmx.remote.internal.rmi=ALL-UNNAMED
+  --add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED
+  --add-exports java.rmi/sun.rmi.server=ALL-UNNAMED
+  --add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED
+  -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -classpath /usr/local/share/scylla-ycsb/conf:/usr/local/share/scylla-ycsb/lib/HdrHistogram-2.1.12.jar:/usr/local/share/scylla-ycsb/lib/annotations-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/apache-client-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/asm-5.0.3.jar:/usr/local/share/scylla-ycsb/lib/asm-analysis-5.0.3.jar:/usr/local/share/scylla-ycsb/lib/asm-commons-5.0.3.jar:/usr/local/share/scylla-ycsb/lib/asm-tree-5.0.3.jar:/usr/local/share/scylla-ycsb/lib/asm-util-5.0.3.jar:/usr/local/share/scylla-ycsb/lib/auth-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/aws-core-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/aws-json-protocol-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/checksums-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/checksums-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/commons-codec-1.15.jar:/usr/local/share/scylla-ycsb/lib/commons-logging-1.2.jar:/usr/local/share/scylla-ycsb/lib/core-1.3.0.jar:/usr/local/share/scylla-ycsb/lib/dynamodb-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/dynamodb-binding-1.3.0.jar:/usr/local/share/scylla-ycsb/lib/endpoints-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/eventstream-1.0.1.jar:/usr/local/share/scylla-ycsb/lib/guava-19.0.jar:/usr/local/share/scylla-ycsb/lib/htrace-core4-4.1.0-incubating.jar:/usr/local/share/scylla-ycsb/lib/http-auth-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/http-auth-aws-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/http-auth-aws-eventstream-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/http-auth-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/http-client-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/httpclient-4.5.13.jar:/usr/local/share/scylla-ycsb/lib/httpcore-4.4.13.jar:/usr/local/share/scylla-ycsb/lib/identity-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/jackson-core-asl-1.9.4.jar:/usr/local/share/scylla-ycsb/lib/jackson-mapper-asl-1.9.4.jar:/usr/local/share/scylla-ycsb/lib/jffi-1.2.16-native.jar:/usr/local/share/scylla-ycsb/lib/jffi-1.2.16.jar:/usr/local/share/scylla-ycsb/lib/jnr-constants-0.9.9.jar:/usr/local/share/scylla-ycsb/lib/jnr-ffi-2.1.7.jar:/usr/local/share/scylla-ycsb/lib/jnr-posix-3.0.44.jar:/usr/local/share/scylla-ycsb/lib/jnr-x86asm-1.0.2.jar:/usr/local/share/scylla-ycsb/lib/json-utils-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/load-balancing-2.0.0.jar:/usr/local/share/scylla-ycsb/lib/log4j-1.2.17.jar:/usr/local/share/scylla-ycsb/lib/metrics-core-3.2.2.jar:/usr/local/share/scylla-ycsb/lib/metrics-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/netty-buffer-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-codec-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-codec-http-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-codec-http2-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-common-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-handler-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-nio-client-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/netty-resolver-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-transport-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-transport-classes-epoll-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/netty-transport-native-unix-common-4.1.112.Final.jar:/usr/local/share/scylla-ycsb/lib/profiles-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/protocol-core-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/reactive-streams-1.0.4.jar:/usr/local/share/scylla-ycsb/lib/regions-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/retries-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/retries-spi-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/scylla-binding-1.3.0.jar:/usr/local/share/scylla-ycsb/lib/scylla-driver-core-3.10.2-scylla-1.jar:/usr/local/share/scylla-ycsb/lib/sdk-core-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/slf4j-api-1.7.25.jar:/usr/local/share/scylla-ycsb/lib/slf4j-log4j12-1.7.10.jar:/usr/local/share/scylla-ycsb/lib/slf4j-simple-1.7.25.jar:/usr/local/share/scylla-ycsb/lib/third-party-jackson-core-2.27.21.jar:/usr/local/share/scylla-ycsb/lib/utils-2.27.21.jar site.ycsb.Client -t -db site.ycsb.db.DynamoDBClient -P /usr/local/share/scylla-ycsb/workloads/workloada -threads 256 -p table=latte_performance -p recordcount=1000000 -p requestdistribution=uniform -p readproportion=0.5 -p updateproportion=0.5 -p insertproportion=0 -p scanproportion=0 -p readmodifywriteproportion=0 -p readallfields=true -p writeallfields=false -p fieldcount=10 -p fieldlength=512 -p fieldlengthdistribution=constant -p dynamodb.primaryKey=pk -p dynamodb.primaryKeyType=HASH -p dynamodb.endpoint=http://172.31.4.206:8000 -p dynamodb.consistentReads=false -p dynamodb.awsAccessKey=dummy -p dynamodb.awsSecretKey=dummy -p dynamodb.region=us-east-1 -p measurement.interval=both -p maxexecutiontime=120 -p operationcount=999999999
+Command line: -t -db site.ycsb.db.DynamoDBClient -P /usr/local/share/scylla-ycsb/workloads/workloada -threads 256 -p table=latte_performance -p recordcount=1000000 -p requestdistribution=uniform -p readproportion=0.5 -p updateproportion=0.5 -p insertproportion=0 -p scanproportion=0 -p readmodifywriteproportion=0 -p readallfields=true -p writeallfields=false -p fieldcount=10 -p fieldlength=512 -p fieldlengthdistribution=constant -p dynamodb.primaryKey=pk -p dynamodb.primaryKeyType=HASH -p dynamodb.endpoint=http://172.31.4.206:8000 -p dynamodb.consistentReads=false -p dynamodb.awsAccessKey=dummy -p dynamodb.awsSecretKey=dummy -p dynamodb.region=us-east-1 -p measurement.interval=both -p maxexecutiontime=120 -p operationcount=999999999
+SLF4J: Class path contains multiple SLF4J bindings.
+SLF4J: Found binding in [jar:file:/usr/local/share/scylla-ycsb/lib/slf4j-log4j12-1.7.10.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/usr/local/share/scylla-ycsb/lib/slf4j-simple-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
+SLF4J: Actual binding is of type [org.slf4j.impl.Log4jLoggerFactory]
+{"version":"1.3.0","git_hash":"0c0207b","git_tag":"v1.3.0","build_date":"2026-03-04T08:52:41+0000","aws_sdk_version":"1.10.20","scylla_driver_version":"3.10.2-scylla-1"}
+
+Loading workload...
+Starting test.
+0    [Thread-21] INFO  site.ycsb.db.DynamoDBClient  -Using DynamoDB endpoint: http://172.31.4.206:8000
+6    [Thread-21] INFO  site.ycsb.db.DynamoDBClient  -Alternator load balancing enabled: false
+Maximum execution time specified as: 120 secs
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+1886 [Thread-123] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for UPDATE
+1900 [Thread-123] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for UPDATE
+1920 [Thread-122] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for READ
+1920 [Thread-122] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for READ
+1924 [Thread-68] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for Intended-UPDATE
+1924 [Thread-68] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for Intended-UPDATE
+1924 [Thread-13] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for Intended-READ
+1924 [Thread-13] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for Intended-READ
+Maximum time elapsed. Requesting stop for the workload.
+Stop requested for workload. Now Joining!
+120025 [Thread-22] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for CLEANUP
+120025 [Thread-22] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for CLEANUP
+120026 [Thread-46] INFO  site.ycsb.measurements.Measurements  -Constructing one measurement type HDRHISTOGRAM for Intended-CLEANUP
+120026 [Thread-46] INFO  site.ycsb.measurements.OneMeasurementHdrHistogram  -Tagging is disabled for Intended-CLEANUP
+Still waiting for thread Thread-81 to complete. Workload status: true
+[OVERALL], RunTime(ms), 122068
+[OVERALL], Throughput(ops/sec), 30677.311006979715
+[TOTAL_GCS_G1_Young_Generation], Count, 542
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1259
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.0313923386964643
+[TOTAL_GCS_G1_Concurrent_GC], Count, 4
+[TOTAL_GC_TIME_G1_Concurrent_GC], Time(ms), 12
+[TOTAL_GC_TIME_%_G1_Concurrent_GC], Time(%), 0.009830586230625554
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 546
+[TOTAL_GC_TIME], Time(ms), 1271
+[TOTAL_GC_TIME_%], Time(%), 1.0412229249270897
+[READ], Operations, 1873194
+[READ], AverageLatency(us), 8601.724982569878
+[READ], MinLatency(us), 922
+[READ], MaxLatency(us), 1528831
+[READ], 50thPercentileLatency(us), 7127
+[READ], 95thPercentileLatency(us), 18095
+[READ], 99thPercentileLatency(us), 30655
+[READ], Return=OK, 1873194
+[CLEANUP], Operations, 256
+[CLEANUP], AverageLatency(us), 7938.05078125
+[CLEANUP], MinLatency(us), 0
+[CLEANUP], MaxLatency(us), 2030591
+[CLEANUP], 50thPercentileLatency(us), 1
+[CLEANUP], 95thPercentileLatency(us), 30
+[CLEANUP], 99thPercentileLatency(us), 329
+[UPDATE], Operations, 1871524
+[UPDATE], AverageLatency(us), 7725.770387128351
+[UPDATE], MinLatency(us), 984
+[UPDATE], MaxLatency(us), 1524735
+[UPDATE], 50thPercentileLatency(us), 6771
+[UPDATE], 95thPercentileLatency(us), 15023
+[UPDATE], 99thPercentileLatency(us), 21487
+[UPDATE], Return=OK, 1871524
+[Intended-READ], Operations, 1873194
+[Intended-READ], AverageLatency(us), 8601.774256163537
+[Intended-READ], MinLatency(us), 922
+[Intended-READ], MaxLatency(us), 1528831
+[Intended-READ], 50thPercentileLatency(us), 7127
+[Intended-READ], 95thPercentileLatency(us), 18095
+[Intended-READ], 99thPercentileLatency(us), 30655
+[Intended-CLEANUP], Operations, 256
+[Intended-CLEANUP], AverageLatency(us), 7938.52734375
+[Intended-CLEANUP], MinLatency(us), 0
+[Intended-CLEANUP], MaxLatency(us), 2030591
+[Intended-CLEANUP], 50thPercentileLatency(us), 1
+[Intended-CLEANUP], 95thPercentileLatency(us), 30
+[Intended-CLEANUP], 99thPercentileLatency(us), 330
+[Intended-UPDATE], Operations, 1871524
+[Intended-UPDATE], AverageLatency(us), 7725.821038362318
+[Intended-UPDATE], MinLatency(us), 984
+[Intended-UPDATE], MaxLatency(us), 1524735
+[Intended-UPDATE], 50thPercentileLatency(us), 6771
+[Intended-UPDATE], 95thPercentileLatency(us), 15023
+[Intended-UPDATE], 99thPercentileLatency(us), 21487
+TIMEFORMAT 122.384 1089.439 402.181

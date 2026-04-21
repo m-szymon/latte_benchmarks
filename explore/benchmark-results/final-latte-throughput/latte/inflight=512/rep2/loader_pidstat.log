@@ -1,0 +1,154 @@
+Linux 6.17.0-1010-aws (ip-172-31-9-32) 	04/20/26 	_x86_64_	(16 CPU)
+
+13:56:31      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:56:36        0         1    0.20    0.20    0.00    0.00    0.40     9  systemd
+13:56:36        0       136    0.00    0.20    0.00    0.20    0.20    14  kworker/14:1-events
+13:56:36      101       800    0.20    0.20    0.00    0.00    0.40     4  dbus-daemon
+13:56:36        0      1487    0.00    0.20    0.00    0.00    0.20     8  kworker/u64:7-kvfree_rcu_reclaim
+13:56:36        0      2089    0.40    0.20    0.00    0.00    0.60     3  containerd
+13:56:36        0      2339    0.20    0.40    0.00    0.00    0.60     2  dockerd
+13:56:36        0      5018    0.00    0.20    0.00    0.00    0.20    10  kworker/10:0-events
+13:56:36     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:56:36        0      7064    0.20    0.00    0.00    0.00    0.20     4  sshd
+13:56:36        0      7128    0.20    0.00    0.00    0.00    0.20     6  docker
+13:56:36        0      7171    0.20    0.00    0.00    0.00    0.20     9  run-benchmark.s
+13:56:36        0      7184  592.22   55.09    0.00    0.00  647.31    15  latte-alternato
+
+13:56:36      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:56:41        0       128    0.00    0.20    0.00    0.00    0.20     8  kworker/8:1-events
+13:56:41        0       155    0.00    0.20    0.00    0.00    0.20     3  kworker/3:1-events
+13:56:41        0      2089    0.20    0.00    0.00    0.00    0.20     3  containerd
+13:56:41     1000      7063    0.20    0.00    0.00    0.00    0.20     2  pidstat
+13:56:41        0      7184  709.40   59.60    0.00    0.00  769.00    15  latte-alternato
+
+13:56:41      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:56:46        0       220    0.00    0.20    0.00    0.00    0.20    12  kworker/12:1-events
+13:56:46        0       279    0.00    0.20    0.00    0.00    0.20     9  kworker/9:3-events
+13:56:46        0       293    0.00    0.20    0.00    0.00    0.20     6  multipathd
+13:56:46     1000      7063    0.20    0.20    0.00    0.00    0.40     8  pidstat
+13:56:46        0      7184  716.60   60.00    0.00    0.00  776.60    15  latte-alternato
+
+13:56:46      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:56:51        0       136    0.00    0.20    0.00    0.00    0.20    14  kworker/14:1-mm_percpu_wq
+13:56:51        0       156    0.00    0.20    0.00    0.00    0.20     7  kworker/7:1-events
+13:56:51        0       218    0.00    0.20    0.00    0.00    0.20     5  kworker/5:1-events
+13:56:51        0      2089    0.00    0.20    0.00    0.00    0.20     3  containerd
+13:56:51        0      5018    0.00    0.20    0.00    0.00    0.20    10  kworker/10:0-events
+13:56:51        0      7184  700.80   59.60    0.00    0.00  760.40    15  latte-alternato
+
+13:56:51      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:56:56        0       128    0.00    0.20    0.00    0.00    0.20     8  kworker/8:1-events
+13:56:56        0       155    0.00    0.20    0.00    0.00    0.20     3  kworker/3:1-events
+13:56:56     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:56:56        0      7184  698.40   60.20    0.00    0.00  758.60    15  latte-alternato
+
+13:56:56      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:01        0       220    0.00    0.20    0.00    0.00    0.20    12  kworker/12:1-events
+13:57:01        0      2089    0.20    0.00    0.00    0.00    0.20     3  containerd
+13:57:01        0      3329    0.00    0.20    0.00    0.00    0.20     5  kworker/u64:1-events_power_efficient
+13:57:01     1000      7063    0.20    0.00    0.00    0.00    0.20     8  pidstat
+13:57:01        0      7184  715.00   60.40    0.00    0.00  775.40    15  latte-alternato
+
+13:57:01      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:06        0       136    0.00    0.20    0.00    0.00    0.20    14  kworker/14:1-mm_percpu_wq
+13:57:06        0       156    0.00    0.20    0.00    0.20    0.20     7  kworker/7:1-events
+13:57:06        0       160    0.00    0.20    0.00    0.00    0.20    15  kworker/15:1-mm_percpu_wq
+13:57:06        0       218    0.00    0.20    0.00    0.00    0.20     5  kworker/5:1-events
+13:57:06        0       279    0.00    0.20    0.00    0.00    0.20     9  kworker/9:3-events
+13:57:06        0      5018    0.00    0.20    0.00    0.00    0.20    10  kworker/10:0-events
+13:57:06     1000      7063    0.00    0.40    0.00    0.00    0.40     8  pidstat
+13:57:06        0      7184  667.40   63.80    0.00    0.00  731.20     9  latte-alternato
+
+13:57:06      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:11        0       155    0.00    0.20    0.00    0.00    0.20     3  kworker/3:1-events
+13:57:11        0      2089    0.00    0.20    0.00    0.00    0.20     3  containerd
+13:57:11     1000      7063    0.20    0.00    0.00    0.00    0.20     8  pidstat
+13:57:11        0      7184  710.20   61.80    0.00    0.00  772.00     1  latte-alternato
+
+13:57:11      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:16        0       128    0.00    0.20    0.00    0.00    0.20     8  kworker/8:1-mm_percpu_wq
+13:57:16        0       220    0.00    0.20    0.00    0.20    0.20    12  kworker/12:1-events
+13:57:16        0      2089    0.20    0.00    0.00    0.00    0.20     3  containerd
+13:57:16     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:57:16        0      7184  711.60   57.60    0.00    0.00  769.20     9  latte-alternato
+
+13:57:16      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:21        0       136    0.00    0.20    0.00    0.00    0.20    14  kworker/14:1-mm_percpu_wq
+13:57:21        0       156    0.00    0.20    0.00    0.00    0.20     7  kworker/7:1-events
+13:57:21        0       218    0.00    0.20    0.00    0.00    0.20     5  kworker/5:1-events
+13:57:21        0      5018    0.00    0.20    0.00    0.20    0.20    10  kworker/10:0-events
+13:57:21     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:57:21        0      7184  711.20   54.60    0.00    0.00  765.80     9  latte-alternato
+
+13:57:21      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:26        0       155    0.00    0.20    0.00    0.20    0.20     3  kworker/3:1-events
+13:57:26        0       220    0.00    0.20    0.00    0.00    0.20    12  kworker/12:1-events
+13:57:26        0       279    0.00    0.20    0.00    0.00    0.20     9  kworker/9:3-events
+13:57:26        0       522    0.00    0.20    0.00    0.00    0.20    12  kworker/u64:5-events_power_efficient
+13:57:26        0       814    0.20    0.00    0.00    0.00    0.20     1  snapd
+13:57:26     1000      7063    0.20    0.20    0.00    0.00    0.40     8  pidstat
+13:57:26        0      7184  695.60   62.80    0.00    0.00  758.40     9  latte-alternato
+
+13:57:26      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:31        0        36    0.00    0.20    0.00    0.00    0.20     3  ksoftirqd/3
+13:57:31        0        59    0.20    0.00    0.00    0.00    0.20     7  migration/7
+13:57:31        0       128    0.00    0.20    0.00    0.20    0.20     8  kworker/8:1-events
+13:57:31        0      2089    0.20    0.20    0.00    0.00    0.40     3  containerd
+13:57:31        0      7184  699.80   57.60    0.00    0.00  757.40     9  latte-alternato
+
+13:57:31      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:36        0        14    0.20    0.00    0.00    0.00    0.20     0  ksoftirqd/0
+13:57:36        0       156    0.00    0.20    0.00    0.00    0.20     7  kworker/7:1-events
+13:57:36        0      2089    0.20    0.00    0.00    0.00    0.20     3  containerd
+13:57:36        0      5018    0.00    0.20    0.00    0.00    0.20    10  kworker/10:0-events
+13:57:36     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:57:36        0      7184  704.60   58.40    0.00    0.00  763.00     9  latte-alternato
+
+13:57:36      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:41        0       136    0.00    0.20    0.00    0.00    0.20    14  kworker/14:1-events
+13:57:41        0       155    0.00    0.20    0.00    0.00    0.20     3  kworker/3:1-events
+13:57:41        0       218    0.00    0.20    0.00    0.00    0.20     5  kworker/5:1-events
+13:57:41        0       279    0.00    0.20    0.00    0.00    0.20     9  kworker/9:3-events
+13:57:41     1000      7063    0.20    0.20    0.00    0.00    0.40     8  pidstat
+13:57:41        0      7184  706.40   56.60    0.00    0.00  763.00     9  latte-alternato
+
+13:57:41      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:46        0       128    0.00    0.20    0.00    0.00    0.20     8  kworker/8:1-events
+13:57:46        0       220    0.00    0.20    0.00    0.20    0.20    12  kworker/12:1-events
+13:57:46        0      2089    0.20    0.00    0.00    0.00    0.20     3  containerd
+13:57:46        0      2339    0.20    0.00    0.00    0.00    0.20     2  dockerd
+13:57:46     1000      7063    0.00    0.20    0.00    0.00    0.20     8  pidstat
+13:57:46        0      7184  710.40   60.00    0.00    0.00  770.40     9  latte-alternato
+
+13:57:46      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:51        0       136    0.00    0.20    0.00    0.00    0.20    14  kworker/14:1-events
+13:57:51        0       279    0.00    0.20    0.00    0.20    0.20     9  kworker/9:3-events
+13:57:51        0      2089    0.00    0.20    0.00    0.00    0.20     3  containerd
+13:57:51        0      5018    0.00    0.20    0.00    0.00    0.20    10  kworker/10:0-events
+13:57:51     1000      7063    0.00    0.20    0.00    0.00    0.20     9  pidstat
+13:57:51        0      7184  704.20   62.00    0.00    0.00  766.20     9  latte-alternato
+
+13:57:51      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:57:56        0       156    0.00    0.20    0.00    0.20    0.20     7  kworker/7:1-events
+13:57:56        0       358    0.00    0.20    0.00    0.00    0.20     8  kworker/u64:4-flush-259:0
+13:57:56     1000      7063    0.20    0.00    0.00    0.00    0.20     9  pidstat
+13:57:56        0      7184  699.40   63.40    0.00    0.00  762.80     9  latte-alternato
+
+13:57:56      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:58:01        0       128    0.00    0.20    0.00    0.00    0.20     8  kworker/8:1-events
+13:58:01        0       155    0.00    0.20    0.00    0.00    0.20     3  kworker/3:1-events
+13:58:01        0       218    0.00    0.20    0.00    0.00    0.20     5  kworker/5:1-events
+13:58:01        0       220    0.00    0.20    0.00    0.00    0.20    12  kworker/12:1-events
+13:58:01     1000      7063    0.00    0.20    0.00    0.00    0.20     9  pidstat
+13:58:01        0      7184  693.20   59.40    0.00    0.00  752.60     9  latte-alternato
+
+13:58:01      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:58:06        0         1    0.20    0.00    0.00    0.00    0.20     8  systemd
+13:58:06        0        15    0.20    0.00    0.00    0.00    0.20    11  rcu_sched
+13:58:06        0       227    0.20    0.00    0.00    0.00    0.20     6  systemd-journal
+13:58:06        0       817    0.00    0.20    0.00    0.00    0.20     7  systemd-logind
+13:58:06        0       819    0.20    0.00    0.00    0.00    0.20     3  udisksd
+13:58:06      102       933    0.00    0.20    0.00    0.00    0.20     2  rsyslogd
+13:58:06        0      2089    0.20    0.20    0.00    0.00    0.40     3  containerd
+13:58:06     1000      2934    0.00    0.20    0.00    0.00    0.20    14  systemd
+13:58:06     1000      7063    0.00    0.20    0.00    0.00    0.20     9  pidstat
