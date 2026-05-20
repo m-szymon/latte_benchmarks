@@ -1,3 +1,0 @@
-tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct
-ycsb,32,5000,1,4804.4,18.071,635.903,18.056,636.415,0.966,5.903,15.0,25.3,4584.4,0.640,4.9
-latte,32,5000,1,4999.5,1.532,3.092,1.465,3.025,0.740,1.245,6.1,31.6,4888.3,0.768,18.5

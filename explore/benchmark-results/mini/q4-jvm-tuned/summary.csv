@@ -1,2 +1,0 @@
-tool,inflight,rep,throughput_ops,read_avg_ms,read_p95_ms,read_p99_ms,update_avg_ms,update_p95_ms,update_p99_ms
-ycsb,128,1,15535.2,7.847,15.663,24.559,7.939,15.831,24.799

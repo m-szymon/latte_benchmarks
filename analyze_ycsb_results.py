@@ -4,83 +4,73 @@ import sys
 from pathlib import Path
 
 
-def g(text, pat):
-    m = re.search(pat, text, re.S)
-    return float(m.group(1)) if m else None
-
-
 def parse_y(path):
-    t = Path(path).read_text()
-    time_match = re.search(
-        r"TIMEFORMAT\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)", t)
-    cpu_usage = 0.0
-    if time_match:
-        real, user, sys_time = map(float, time_match.groups())
-        if real > 0:
-            cpu_usage = (user + sys_time) / real * 100
+    t = path.read_text()
+
+    def g(pat):
+        m = re.search(pat, t)
+        return float(m.group(1)) if m else 0
+
+    tp = g(r'\[OVERALL\], Throughput\(ops/sec\), ([0-9.]+)')
+
+    # Service-time (request latency) — [READ], [UPDATE]
+    ra = g(r'\[READ\], AverageLatency\(us\), ([0-9.]+)') / 1000
+    r99 = g(r'\[READ\], 99thPercentileLatency\(us\), ([0-9.]+)') / 1000
+    ua = g(r'\[UPDATE\], AverageLatency\(us\), ([0-9.]+)') / 1000
+    u99 = g(r'\[UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)') / 1000
+
+    # Cycle latency (intended / CO-corrected) — [Intended-READ], [Intended-UPDATE]
+    ira = g(r'\[Intended-READ\], AverageLatency\(us\), ([0-9.]+)') / 1000
+    ir99 = g(r'\[Intended-READ\], 99thPercentileLatency\(us\), ([0-9.]+)') / 1000
+    iua = g(r'\[Intended-UPDATE\], AverageLatency\(us\), ([0-9.]+)') / 1000
+    iu99 = g(
+        r'\[Intended-UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)') / 1000
+
+    # For YCSB: cycle = intended, request = service-time
+    # If no intended block (rate not set), cycle = request
+    get_cycle_mean = ira if ira > 0 else ra
+    get_cycle_p99 = ir99 if ir99 > 0 else r99
+    upd_cycle_mean = iua if iua > 0 else ua
+    upd_cycle_p99 = iu99 if iu99 > 0 else u99
+
+    # Aggregate request latency (weighted by operation count)
+    r_ops = g(r'\[READ\], Operations, ([0-9]+)')
+    u_ops = g(r'\[UPDATE\], Operations, ([0-9]+)')
+    total = r_ops + u_ops
+    if total > 0:
+        agg_req_mean = (r_ops * ra + u_ops * ua) / total
+        agg_req_p99 = max(r99, u99)  # conservative: max of per-op p99
+    else:
+        agg_req_mean = 0
+        agg_req_p99 = 0
 
     return {
-        'throughput': g(t, r"\[OVERALL\], Throughput\(ops/sec\), ([0-9.]+)"),
-        'read_avg_ms': (g(t, r"\[READ\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'read_p95_ms': (g(t, r"\[READ\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'read_p99_ms': (g(t, r"\[READ\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'update_avg_ms': (g(t, r"\[UPDATE\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'update_p95_ms': (g(t, r"\[UPDATE\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'update_p99_ms': (g(t, r"\[UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        # Intended (CO-corrected) latency — present when -target (rate limit) is set
-        'intended_read_avg_ms': (g(t, r"\[Intended-READ\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'intended_read_p95_ms': (g(t, r"\[Intended-READ\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'intended_read_p99_ms': (g(t, r"\[Intended-READ\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'intended_update_avg_ms': (g(t, r"\[Intended-UPDATE\], AverageLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'intended_update_p95_ms': (g(t, r"\[Intended-UPDATE\], 95thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'intended_update_p99_ms': (g(t, r"\[Intended-UPDATE\], 99thPercentileLatency\(us\), ([0-9.]+)") or 0) / 1000,
-        'cpu_usage': cpu_usage,
+        "tp": tp,
+        "get_cycle_mean": get_cycle_mean, "get_cycle_p99": get_cycle_p99,
+        "upd_cycle_mean": upd_cycle_mean, "upd_cycle_p99": upd_cycle_p99,
+        "agg_req_mean": agg_req_mean, "agg_req_p99": agg_req_p99
     }
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: analyze_ycsb_results.py <output_dir>")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("outdir", type=Path)
+    parser.add_argument("--csv-prefix", help="tool,inflight,rate_str,rep")
+    parser.add_argument("--csv-suffix", help="loader_cpu,scylla_cpu,...")
+    args = parser.parse_args()
+
+    logfile = args.outdir / 'ycsb_1.log'
+    if not logfile.exists():
         sys.exit(1)
 
-    outdir = Path(sys.argv[1])
-    report_file = outdir / 'ycsb_1.log'
+    res = parse_y(logfile)
 
-    if not report_file.exists():
-        print(f"No YCSB report found: {report_file}")
-        sys.exit(1)
-
-    report = parse_y(report_file)
-
-    print('=== YCSB Alternator Results ===')
-
-    def fmt(val):
-        """Format value, returning 'N/A' if None"""
-        return round(val, 3) if val is not None else 'N/A'
-
-    throughput = report.get("throughput")
-    if throughput:
-        print(f'Throughput: {fmt(throughput)} ops/s')
+    if args.csv_prefix:
+        print(f"{args.csv_prefix},{res['tp']:.1f},{res['get_cycle_mean']:.3f},{res['get_cycle_p99']:.3f},{res['upd_cycle_mean']:.3f},{res['upd_cycle_p99']:.3f},{res['agg_req_mean']:.3f},{res['agg_req_p99']:.3f},{args.csv_suffix}")
     else:
-        print('Throughput: N/A')
-
-    print(
-        f'READ avg/p95/p99: {fmt(report["read_avg_ms"])} / {fmt(report["read_p95_ms"])} / {fmt(report["read_p99_ms"])} ms')
-    print(
-        f'UPDATE avg/p95/p99: {fmt(report["update_avg_ms"])} / {fmt(report["update_p95_ms"])} / {fmt(report["update_p99_ms"])} ms')
-
-    # Intended (CO-corrected) latency
-    if report.get("intended_read_avg_ms", 0) > 0:
+        print(f"Throughput: {res['tp']:.1f} ops/s")
         print(
-            f'Intended-READ avg/p95/p99: {fmt(report["intended_read_avg_ms"])} / {fmt(report["intended_read_p95_ms"])} / {fmt(report["intended_read_p99_ms"])} ms')
+            f"READ avg/p99: {res['get_cycle_mean']:.3f} / {res['get_cycle_p99']:.3f} ms")
         print(
-            f'Intended-UPDATE avg/p95/p99: {fmt(report["intended_update_avg_ms"])} / {fmt(report["intended_update_p95_ms"])} / {fmt(report["intended_update_p99_ms"])} ms')
-    else:
-        print('Intended latency: N/A (no rate limit set)')
-
-
-    cpu_usage = report.get("cpu_usage")
-    if cpu_usage is not None:
-        print(f'CPU usage: {round(cpu_usage, 1)}%')
-    else:
-        print('CPU usage: N/A')
+            f"UPDATE avg/p99: {res['upd_cycle_mean']:.3f} / {res['upd_cycle_p99']:.3f} ms")

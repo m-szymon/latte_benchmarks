@@ -19,6 +19,9 @@ WARMUP_SEC="${WARMUP_SEC:-0}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
 UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
 LATTE_WORKLOAD="${LATTE_WORKLOAD:-performance.rn}"
+LATTE_BINARY="${LATTE_BINARY:-latte-alternator}"
+LB_POLICY="${LB_POLICY:-}"
+REQUEST_COMPRESSION="${REQUEST_COMPRESSION:-}"
 
 mkdir -p "$OUTDIR"
 
@@ -30,6 +33,20 @@ fi
 WARMUP_ARG=""
 if [ "$WARMUP_SEC" -gt 0 ]; then
   WARMUP_ARG="--warmup ${WARMUP_SEC}s"
+fi
+
+LB_ARG=""
+if [ -n "$LB_POLICY" ]; then
+  if [ "$LB_POLICY" = "affinity-key-routing" ]; then
+    LB_ARG="--key-route-affinity rmw --key-route-affinity-table ${TABLE}=pk"
+  elif [ "$LB_POLICY" = "round-robin" ]; then
+    LB_ARG=""
+  fi
+fi
+
+COMPRESSION_ARG=""
+if [ -n "$REQUEST_COMPRESSION" ]; then
+  COMPRESSION_ARG="--request-compression $REQUEST_COMPRESSION"
 fi
 
 echo "=== Latte Alternator Benchmark ==="
@@ -44,8 +61,8 @@ export TIMEFORMAT="TIMEFORMAT %R %U %S"
 
 echo "[1/1] Running Latte benchmark"
 # shellcheck disable=SC2086
-{ time latte-alternator run "$LATTE_WORKLOAD" "$ALT_ENDPOINT" \
-  -t "$THREADS" -p "$CONCURRENCY" -d "${RUN_DURATION_SEC}s" $RATE_ARG $WARMUP_ARG \
+{ time "$LATTE_BINARY" run "$LATTE_WORKLOAD" "$ALT_ENDPOINT" \
+  -t "$THREADS" -p "$CONCURRENCY" -d "${RUN_DURATION_SEC}s" $RATE_ARG $WARMUP_ARG $LB_ARG $COMPRESSION_ARG \
   -P "table=\"$TABLE\"" \
   -P "row_count=$ROW_COUNT" \
   -P "fieldcount=$FIELDCOUNT" \

@@ -1,2 +1,0 @@
-tool,inflight,rep,throughput_ops,read_avg_ms,read_p95_ms,read_p99_ms,update_avg_ms,update_p95_ms,update_p99_ms
-latte,256,1,20531.4,15.417,45.679,66.519,9.514,20.496,25.788
