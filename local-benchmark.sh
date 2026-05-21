@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# local-benchmark.sh — Verification benchmark: Latte vs YCSB on Alternator (Local Docker).
+# local-benchmark.sh — Verification benchmark: Latte drivers on Alternator (Local Docker).
 #
 # Usage:
-#   ./local-benchmark.sh build           # Local: docker build latte + pull YCSB
+#   ./local-benchmark.sh build           # Local: docker build latte
 #   ./local-benchmark.sh provision       # Local: Start Scylla container
 #   ./local-benchmark.sh run smoke       # Sanity check (60s, 1 rep)
 #   ./local-benchmark.sh run latency     # Rate-limited comparison (120s, 2 reps)
@@ -27,12 +27,6 @@ SCYLLA_NODES="${SCYLLA_NODES:-3}"
 SCYLLA_CPUS="${SCYLLA_CPUS:-2}"
 SCYLLA_IMAGE="${SCYLLA_IMAGE:-scylladb/scylla-nightly:2026.1.0-dev-0.20251003.20aeed160740-x86_64}"
 ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-only_rmw_uses_lwt}"
-
-# YCSB image
-YCSB_DOCKER_IMAGE="${YCSB_DOCKER_IMAGE:-scylladb/ycsb:1.3.0}"
-
-# JVM tuning — default-on (proven in explore/ Phase 6)
-YCSB_JAVA_OPTS="${YCSB_JAVA_OPTS:--Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=20}"
 
 # Workload parameters
 TABLE="${TABLE:-latte_performance}"
@@ -176,13 +170,8 @@ build_local_images() {
     docker build -t latte-alternator-new -f "$BENCHMARKS_DIR/Dockerfile.latte-new" "$BENCHMARKS_DIR"
     log "Latte-new image built"
 
-    log "Pulling $YCSB_DOCKER_IMAGE locally..."
-    docker pull "$YCSB_DOCKER_IMAGE"
-    log "YCSB image pulled"
-
     log "Local images ready:"
     docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator
-    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' "$YCSB_DOCKER_IMAGE"
 }
 
 verify_local_images() {
@@ -191,9 +180,6 @@ verify_local_images() {
     fi
     if ! docker image inspect latte-alternator-new >/dev/null 2>&1; then
         die "Latte-new image not found locally. Run: ./local-benchmark.sh build"
-    fi
-    if ! docker image inspect "$YCSB_DOCKER_IMAGE" >/dev/null 2>&1; then
-        die "YCSB image ($YCSB_DOCKER_IMAGE) not found locally. Run: ./local-benchmark.sh build"
     fi
     log "Local images verified"
 }
@@ -282,31 +268,7 @@ run_one_pass() {
     # Ensure out_dir is absolute for docker volume mapping
     output_vol=$(cd "$out_dir" && pwd)
 
-    if [[ "$tool" == "ycsb" ]]; then
-        log "  YCSB: inflight=$inflight duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
-        docker run --rm --network "$NETWORK_NAME" --name "$LOADER_CONTAINER" \
-          -v "$BENCHMARKS_DIR/run-ycsb-benchmark.sh:/run-benchmark.sh:ro" \
-          -v "$output_vol:/output" \
-          -v "$BENCHMARKS_DIR/dynamodb.properties:/dynamodb.properties:ro" \
-          -v "$BENCHMARKS_DIR/AWSCredentials.properties:/AWSCredentials.properties:ro" \
-          -v "$BENCHMARKS_DIR/performance.rn:/performance.rn:ro" \
-          -e ALT_ENDPOINT="http://${SCYLLA_CONTAINER_PREFIX}-1:8000" \
-          -e TABLE="${TABLE}" \
-          -e ROW_COUNT="${ROW_COUNT}" \
-          -e YCSB_THREADS="${inflight}" \
-          -e FIELDCOUNT="${FIELDCOUNT}" \
-          -e FIELDLENGTH="${FIELDLENGTH}" \
-          -e READ_PROPORTION="${READ_PROPORTION}" \
-          -e UPDATE_PROPORTION="${UPDATE_PROPORTION}" \
-          -e RUN_DURATION_SEC="${RUN_DURATION_SEC}" \
-          -e WARMUP_SEC="${WARMUP_SEC}" \
-          -e RATE="${RATE}" \
-          -e YCSB_JAVA_OPTS="${YCSB_JAVA_OPTS}" \
-          -e OUTDIR=/output \
-          --entrypoint /bin/bash \
-          "${YCSB_DOCKER_IMAGE}" /run-benchmark.sh
-
-    elif [[ "$tool" == "latte" ]]; then
+    if [[ "$tool" == "latte" ]]; then
         local params
         params=$(compute_latte_params "$inflight")
         local threads=${params%% *}
@@ -414,15 +376,7 @@ parse_result_line() {
         scylla_reactor=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reactor_util_pct','0'))" 2>/dev/null || echo "0")
     fi
 
-    if [[ "$tool" == "ycsb" ]]; then
-        local logfile="$out_dir/ycsb_1.log"
-        if [[ -f "$logfile" ]]; then
-            python3 "$BENCHMARKS_DIR/analyze_ycsb_results.py" "$out_dir" \
-                --csv-prefix "$tool,$inflight,$rate_str,$rep" \
-                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor"
-        fi
-
-    elif [[ "$tool" == latte* ]]; then
+    if [[ "$tool" == latte* ]]; then
         local jsonfile="$out_dir/latte_1.json"
         if [[ -f "$jsonfile" ]]; then
             python3 "$BENCHMARKS_DIR/analyze_latte_results.py" "$out_dir" \
@@ -430,41 +384,6 @@ parse_result_line() {
                 --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor"
         fi
     fi
-}
-
-###############################################################################
-# Smoke validation — fail-fast if YCSB intended-latency block is missing
-###############################################################################
-validate_smoke() {
-    local phase_dir="$1"
-    local ycsb_log="$phase_dir/ycsb/inflight=16/rep1/ycsb_1.log"
-
-    if [[ ! -f "$ycsb_log" ]]; then
-        die "Smoke validation failed: YCSB log not found at $ycsb_log"
-    fi
-
-    if ! grep -q '\[Intended-READ\]' "$ycsb_log"; then
-        echo
-        echo "=== SMOKE VALIDATION FAILED ==="
-        echo "YCSB log does not contain [Intended-READ] block."
-        echo "This means measurement.interval=both is not working."
-        echo "Check run-ycsb-benchmark.sh for the -p measurement.interval=both line."
-        echo "Log: $ycsb_log"
-        echo
-        die "Aborting. Fix YCSB intended-latency measurement before proceeding."
-    fi
-
-    # Validate Prometheus scrape
-    local prom_log="$phase_dir/ycsb/inflight=16/rep1/scylla_prometheus.log"
-    if [[ ! -f "$prom_log" ]] || [[ ! -s "$prom_log" ]]; then
-        log "WARN: Prometheus scrape log missing or empty. Server-side metrics will be unavailable."
-    else
-        local snap_count
-        snap_count=$(grep -c "^---TIMESTAMP" "$prom_log" 2>/dev/null || echo "0")
-        log "Prometheus scrape OK: $snap_count snapshots captured"
-    fi
-
-    log "Smoke validation passed: YCSB intended-latency block present, Prometheus data captured."
 }
 
 ###############################################################################
@@ -490,9 +409,9 @@ run_phase() {
             # Alternate tool order per rep to reduce ordering bias
             local tools
             if (( rep % 2 == 1 )); then
-                tools="ycsb latte latte-new-rr latte-new-affinity"
+                tools="latte latte-new-rr latte-new-affinity"
             else
-                tools="latte-new-affinity latte-new-rr latte ycsb"
+                tools="latte-new-affinity latte-new-rr latte"
             fi
 
             for tool in $tools; do
@@ -574,7 +493,6 @@ cmd_run() {
             RATE=1000
             INFLIGHT_LIST="16"
             run_phase "smoke"
-            validate_smoke "$RESULTS_DIR/smoke"
             ;;
         latency)
             ROW_COUNT=100000

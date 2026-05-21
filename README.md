@@ -30,7 +30,7 @@ Environment variables can be used to customize the AWS run:
 
 ## Local Verification Benchmarks (`local-benchmark.sh`)
 
-The `local-benchmark.sh` script automates a full comparison between Latte and YCSB using local Docker containers. It sets up a 3-node Scylla cluster and runs various benchmark scenarios.
+The `local-benchmark.sh` script automates a full comparison between Latte drivers using local Docker containers. It sets up a 3-node Scylla cluster and runs various benchmark scenarios.
 
 ### Usage
 
