@@ -1,0 +1,121 @@
+// USAGE:
+// a) Create schema:
+// $ latte schema hot_partition.rn http://172.17.0.2:8000
+//
+// b) Load data:
+// $ latte load hot_partition.rn http://172.17.0.2:8000 \
+//     -P hot_partitions=128 -P hot_items_per_partition=78 -P cold_partitions=90000
+//
+// c) Run hot-partition benchmark (compare with/without --key-route-affinity):
+//
+// Round-robin:
+// $ latte run hot_partition.rn http://172.17.0.2:8000 \
+//     -f get:0.3 -f update:0.7 -p 256 -P hot_traffic_ratio=0.99
+//
+// Key affinity (alternator-new build, mixed read/write):
+// $ latte run hot_partition.rn http://172.17.0.2:8000 \
+//     -f get:0.3 -f update:0.7 -p 256 -P hot_traffic_ratio=0.99 \
+//     --key-route-affinity rmw \
+//     --key-route-affinity-table latte_hot_partition=pk
+
+use latte::*;
+
+const TABLE = latte::param!("table", "latte_hot_partition");
+const FIELD_COUNT = latte::param!("fieldcount", 10);
+const FIELD_SIZE = latte::param!("fieldlength", 512);
+
+const CONSISTENT_READS = latte::param!("alternator.consistentReads", false);
+
+// Hot keyspace: many partition keys (hot_0..hot_N), each with multiple sort keys.
+const HOT_PARTITIONS = latte::param!("hot_partitions", 32);
+const HOT_ITEMS_PER_PARTITION = latte::param!("hot_items_per_partition", 78);
+const COLD_PARTITIONS = latte::param!("cold_partitions", 100000);
+
+// Share of operations routed to the hot keyspace (0.0..1.0). Remaining ops hit cold keys.
+const HOT_TRAFFIC_RATIO = latte::param!("hot_traffic_ratio", 0.95);
+
+fn hot_item_count() {
+    return HOT_PARTITIONS * HOT_ITEMS_PER_PARTITION;
+}
+
+pub async fn schema(db) {
+    db.delete_table(TABLE).await;
+    db.create_table(TABLE, #{ primary_key: "pk", sort_key: "sk" }).await?;
+}
+
+pub async fn prepare(ctx) {
+    ctx.load_cycle_count = hot_item_count() + COLD_PARTITIONS;
+}
+
+fn generate_item(pk, sk, seed) {
+    let item = #{ pk: pk, sk: sk };
+    for f in 0..FIELD_COUNT {
+        item["field" + f.to_string()] = latte::text(latte::hash2(seed, f), FIELD_SIZE);
+    }
+    return item;
+}
+
+fn hot_partition_key(partition_idx) {
+    return "hot_" + partition_idx.to_string();
+}
+
+fn is_hot_op(i) {
+    let threshold_pct = (HOT_TRAFFIC_RATIO * 100.0) as i64;
+    if threshold_pct >= 100 {
+        return true;
+    }
+    if threshold_pct <= 0 {
+        return false;
+    }
+    return latte::hash_range(i, 100) < threshold_pct;
+}
+
+fn hot_key_for_op(i) {
+    let partition_idx = latte::hash_range(i, HOT_PARTITIONS);
+    let sk = latte::hash_range(i, HOT_ITEMS_PER_PARTITION).to_string();
+    let pk = hot_partition_key(partition_idx);
+    return #{ pk: pk, sk: sk };
+}
+
+pub async fn load(db, i) {
+    let hot_total = hot_item_count();
+    if i < hot_total {
+        let partition_idx = i / HOT_ITEMS_PER_PARTITION;
+        let item_idx = i % HOT_ITEMS_PER_PARTITION;
+        let pk = hot_partition_key(partition_idx);
+        let sk = item_idx.to_string();
+        let item = generate_item(pk, sk, i);
+        db.put(TABLE, item, ()).await?;
+    } else {
+        let cold_idx = i - hot_total;
+        let item = generate_item("cold_" + cold_idx.to_string(), "0", i);
+        db.put(TABLE, item, ()).await?;
+    }
+}
+
+pub async fn get(db, i) {
+    if is_hot_op(i) {
+        let key = hot_key_for_op(i);
+        db.get(TABLE, key, #{ consistent_read: CONSISTENT_READS }).await?;
+    } else {
+        let cold_idx = latte::hash_range(i, COLD_PARTITIONS);
+        let key = #{ pk: "cold_" + cold_idx.to_string(), sk: "0" };
+        db.get(TABLE, key, #{ consistent_read: CONSISTENT_READS }).await?;
+    }
+}
+
+pub async fn update(db, i) {
+    let f = latte::hash_range(i, FIELD_COUNT);
+    let expr = "SET field" + f.to_string() + "=:v";
+    let values = #{};
+    values[":v"] = latte::text(latte::hash2(i, f), FIELD_SIZE);
+
+    if is_hot_op(i) {
+        let key = hot_key_for_op(i);
+        db.update(TABLE, key, #{ update: expr, attribute_values: values }).await?;
+    } else {
+        let cold_idx = latte::hash_range(i, COLD_PARTITIONS);
+        let key = #{ pk: "cold_" + cold_idx.to_string(), sk: "0" };
+        db.update(TABLE, key, #{ update: expr, attribute_values: values }).await?;
+    }
+}

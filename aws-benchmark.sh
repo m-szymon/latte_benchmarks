@@ -5,9 +5,9 @@
 # Usage:
 #   ./aws-benchmark.sh build           # Local: docker build latte
 #   ./aws-benchmark.sh provision       # EC2: launch + setup + ship images
-#   ./aws-benchmark.sh run smoke       # Sanity check (60s, 1 rep) — validates parsers
-#   ./aws-benchmark.sh run latency     # Rate-limited comparison (120s, 2 reps)
-#   ./aws-benchmark.sh run throughput  # Saturated comparison (120s, 2 reps, 2 inflights)
+#   ./aws-benchmark.sh run smoke       # Sanity check (60s, 1 rep) — validates parsers (+ hot copy)
+#   ./aws-benchmark.sh run latency     # Rate-limited comparison (120s, 2 reps) (+ hot copy)
+#   ./aws-benchmark.sh run throughput  # Saturated comparison (120s, 2 reps, 2 inflights) (+ hot copy)
 #   ./aws-benchmark.sh teardown        # Destroy tagged instances
 #   ./aws-benchmark.sh report          # Aggregate all summary.csv tables
 #
@@ -31,7 +31,8 @@ BENCH_TAG="${BENCH_TAG:-latte-bench-active}"
 SCYLLA_INSTANCE_TYPE="${SCYLLA_INSTANCE_TYPE:-i3.2xlarge}"
 LOADER_INSTANCE_TYPE="${LOADER_INSTANCE_TYPE:-c5.4xlarge}"
 
-# Scylla
+# Scylla cluster size
+SCYLLA_NODES="${SCYLLA_NODES:-3}"
 SCYLLA_IMAGE="${SCYLLA_IMAGE:-scylladb/scylla-nightly:2026.1.0-dev-0.20251003.20aeed160740-x86_64}"
 ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-only_rmw_uses_lwt}"
 
@@ -41,6 +42,7 @@ FIELDCOUNT="${FIELDCOUNT:-10}"
 FIELDLENGTH="${FIELDLENGTH:-512}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
 UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
+REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION:-uniform}"
 
 # Latte thread/concurrency: threads = min(inflight, hint), concurrency = inflight/threads
 LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-8}"
@@ -50,16 +52,18 @@ MONITOR_INTERVAL=5
 
 # Local paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BENCHMARKS_DIR="${BENCHMARKS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+BENCHMARKS_DIR="${BENCHMARKS_DIR:-$SCRIPT_DIR}"
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/benchmark-results}"
+# shellcheck source=benchmark-hot-common.sh
+source "$SCRIPT_DIR/benchmark-hot-common.sh"
 
 ###############################################################################
 # Internal state
 ###############################################################################
-SCYLLA_INSTANCE_ID=""
+SCYLLA_INSTANCE_IDS=()
 LOADER_INSTANCE_ID=""
-SCYLLA_PUBLIC_IP=""
-SCYLLA_PRIVATE_IP=""
+SCYLLA_PUBLIC_IPS=()
+SCYLLA_PRIVATE_IPS=()
 LOADER_PUBLIC_IP=""
 SG_ID=""
 AMI_ID=""
@@ -95,26 +99,27 @@ remote() {
 # Tag-based instance discovery
 ###############################################################################
 find_tagged_instances() {
+    local states="${1:-running}"
     local query
     query=$(aws ec2 describe-instances --region "$REGION" \
         --filters \
             "Name=tag:BenchGroup,Values=$BENCH_TAG" \
-            "Name=instance-state-name,Values=running" \
+            "Name=instance-state-name,Values=$states" \
         --query 'Reservations[].Instances[].[InstanceId, Tags[?Key==`Name`].Value | [0], PublicIpAddress, PrivateIpAddress]' \
         --output text 2>/dev/null || true)
 
-    SCYLLA_INSTANCE_ID=""
+    SCYLLA_INSTANCE_IDS=()
     LOADER_INSTANCE_ID=""
-    SCYLLA_PUBLIC_IP=""
-    SCYLLA_PRIVATE_IP=""
+    SCYLLA_PUBLIC_IPS=()
+    SCYLLA_PRIVATE_IPS=()
     LOADER_PUBLIC_IP=""
 
     while IFS=$'\t' read -r id name pub priv; do
         [[ -z "$id" ]] && continue
         if [[ "$name" == *scylla* ]]; then
-            SCYLLA_INSTANCE_ID="$id"
-            SCYLLA_PUBLIC_IP="$pub"
-            SCYLLA_PRIVATE_IP="$priv"
+            SCYLLA_INSTANCE_IDS+=("$id")
+            SCYLLA_PUBLIC_IPS+=("$pub")
+            SCYLLA_PRIVATE_IPS+=("$priv")
         elif [[ "$name" == *loader* ]]; then
             LOADER_INSTANCE_ID="$id"
             LOADER_PUBLIC_IP="$pub"
@@ -123,7 +128,11 @@ find_tagged_instances() {
 }
 
 instances_exist() {
-    [[ -n "$SCYLLA_INSTANCE_ID" && -n "$LOADER_INSTANCE_ID" ]]
+    [[ ${#SCYLLA_INSTANCE_IDS[@]} -eq "$SCYLLA_NODES" && -n "$LOADER_INSTANCE_ID" ]]
+}
+
+bench_instances_found() {
+    [[ ${#SCYLLA_INSTANCE_IDS[@]} -gt 0 || -n "$LOADER_INSTANCE_ID" ]]
 }
 
 ###############################################################################
@@ -200,13 +209,17 @@ ensure_security_group() {
             --description "Latte benchmark - SSH, Alternator, CQL, metrics" \
             --vpc-id "$VPC_ID" \
             --query 'GroupId' --output text)
-        for port in 22 8000 9042 9180; do
+        for port in 22 7000 7001 8000 9042 9180; do
             aws ec2 authorize-security-group-ingress --region "$REGION" \
                 --group-id "$SG_ID" --protocol tcp --port "$port" --cidr 0.0.0.0/0 >/dev/null
         done
         log "Security group created: $SG_ID"
     else
         log "Using existing security group: $SG_NAME ($SG_ID)"
+        for port in 7000 7001; do
+            aws ec2 authorize-security-group-ingress --region "$REGION" \
+                --group-id "$SG_ID" --protocol tcp --port "$port" --cidr 0.0.0.0/0 >/dev/null 2>&1 || true
+        done
     fi
 }
 
@@ -284,8 +297,10 @@ wait_for_ssh() {
 # Setup Scylla
 ###############################################################################
 setup_scylla() {
-    local host="$SCYLLA_PUBLIC_IP"
-    log "Setting up Scylla on $host..."
+    local host="$1"
+    local priv_ip="$2"
+    local seed_ip="$3"
+    log "Setting up Scylla on $host ($priv_ip)..."
 
     remote "$host" bash -s <<'SCYLLA_APT'
 set -euo pipefail
@@ -333,19 +348,21 @@ services:
   scylladb:
     container_name: scylla-alternator
     image: ${SCYLLA_IMAGE}
+    network_mode: host
     command: >
       --alternator-port=8000
       --alternator-write-isolation=${ALTERNATOR_WRITE_ISOLATION}
       --batch-size-warn-threshold-in-kb=1024
+      --seeds=${seed_ip}
+      --listen-address=${priv_ip}
+      --rpc-address=0.0.0.0
+      --broadcast-address=${priv_ip}
+      --broadcast-rpc-address=${priv_ip}
     healthcheck:
       test: ["CMD", "cqlsh", "-e", "select * from system.local WHERE key='local'"]
       interval: 1s
       timeout: 5s
       retries: 60
-    ports:
-      - "8000:8000"
-      - "9042:9042"
-      - "9180:9180"
     volumes:
       - /mnt/data/scylla:/var/lib/scylla
 YAML
@@ -362,6 +379,19 @@ COMPOSE_SCRIPT
         sleep 5
     done
     die "Scylla did not become healthy within 600s"
+}
+
+check_cluster_healthy() {
+    [[ ${#SCYLLA_PUBLIC_IPS[@]} -gt 0 ]] || return 1
+    local host="${SCYLLA_PUBLIC_IPS[0]}"
+    local expected="${#SCYLLA_PUBLIC_IPS[@]}"
+    local live_nodes
+    live_nodes=$(remote "$host" "sudo docker exec scylla-alternator nodetool status" 2>/dev/null | awk '/^UN/ {n++} END {print n+0}')
+    if [[ "$live_nodes" -lt "$expected" ]]; then
+        log "WARN: Cluster health check: $live_nodes/$expected nodes UP"
+        return 1
+    fi
+    return 0
 }
 
 ###############################################################################
@@ -399,7 +429,7 @@ build_local_images() {
     log "Latte-new image built"
 
     log "Local images ready:"
-    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator
+    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator latte-alternator-new
 }
 
 verify_local_images() {
@@ -425,44 +455,61 @@ ship_images_to_loader() {
     log "Shipping latte-alternator-new image to loader..."
     docker save latte-alternator-new | ssh $SSH_OPTS -i "$KEY_FILE" "ubuntu@$host" "sudo docker load"
     log "Latte-new image loaded on loader"
-
-    log "Shipping benchmark scripts to loader..."
-    scp $SSH_OPTS -i "$KEY_FILE" \
-        "$BENCHMARKS_DIR/run-latte-benchmark.sh" \
-        "$BENCHMARKS_DIR/performance.rn" \
-        "$BENCHMARKS_DIR/dynamodb.properties" \
-        "$BENCHMARKS_DIR/AWSCredentials.properties" \
-        "$BENCHMARKS_DIR/analyze_latte_results.py" \
-        "$BENCHMARKS_DIR/analyze_scylla_metrics.py" \
-        "ubuntu@$host:~/"
-    log "Scripts shipped to loader"
 }
 
 ###############################################################################
 # Load data
 ###############################################################################
 load_data() {
+    local phase_name="${1:-}"
+    local wl="performance.rn"
+    local -a extra_args=()
+
+    if [[ "$phase_name" == *"-hot" ]]; then
+        wl="hot_partition.rn"
+        compute_hot_keyspace_params
+        extra_args+=(
+            -P "hot_partitions=${HOT_PARTITIONS}"
+            -P "hot_items_per_partition=${HOT_ITEMS_PER_PARTITION}"
+            -P "cold_partitions=${COLD_PARTITIONS}"
+        )
+    else
+        extra_args+=(
+            -P "row_count=${ROW_COUNT}"
+            -P 'requestdistribution="uniform"'
+        )
+    fi
+
     local host="$LOADER_PUBLIC_IP"
-    log "Loading $ROW_COUNT rows into Scylla..."
+    log_load_data "$phase_name" "$wl"
+
+    local endpoints_str=""
+    for ip in "${SCYLLA_PRIVATE_IPS[@]}"; do
+        endpoints_str+="http://$ip:8000 "
+    done
+    endpoints_str="${endpoints_str% }"
+
+    local extra_args_encoded
+    printf -v extra_args_encoded '%q ' "${extra_args[@]}"
 
     remote "$host" bash -s <<LOAD_SCRIPT
 set -euo pipefail
+extra_args=(${extra_args_encoded})
 sudo docker run --rm --net host \
   --entrypoint latte-alternator \
   latte-alternator \
-  schema performance.rn http://${SCYLLA_PRIVATE_IP}:8000 \
+  schema ${wl} ${endpoints_str} \
     -P "table=\"${TABLE}\""
 
 sudo docker run --rm --net host \
   --entrypoint latte-alternator \
   latte-alternator \
-  load performance.rn http://${SCYLLA_PRIVATE_IP}:8000 \
+  load ${wl} ${endpoints_str} \
     -t 8 --concurrency 128 \
     -P "table=\"${TABLE}\"" \
-    -P "row_count=${ROW_COUNT}" \
     -P "fieldcount=${FIELDCOUNT}" \
     -P "fieldlength=${FIELDLENGTH}" \
-    -P 'requestdistribution="uniform"'
+    "\${extra_args[@]}"
 LOAD_SCRIPT
     log "Data loaded"
 }
@@ -475,7 +522,7 @@ start_monitoring() {
     log "Starting monitoring: $tag"
 
     # mpstat on both hosts (single collector per host)
-    for host in "$SCYLLA_PUBLIC_IP" "$LOADER_PUBLIC_IP"; do
+    for host in "${SCYLLA_PUBLIC_IPS[@]}" "$LOADER_PUBLIC_IP"; do
         remote "$host" bash -s <<MON
 set -eu
 mkdir -p ~/monitor
@@ -485,17 +532,19 @@ MON
     done
 
     # Prometheus scrape on Scylla node (always-on)
-    remote "$SCYLLA_PUBLIC_IP" bash -s <<PROM
+    for host in "${SCYLLA_PUBLIC_IPS[@]}"; do
+        remote "$host" bash -s <<PROM
 set -eu
 mkdir -p ~/monitor
 nohup bash -c 'while true; do echo "---TIMESTAMP \$(date +%s)---"; curl -s http://localhost:9180/metrics 2>/dev/null || true; sleep ${MONITOR_INTERVAL}; done' > ~/monitor/${tag}_prometheus.log 2>&1 &
 echo \$! >> ~/monitor/${tag}_pids
 PROM
+    done
 }
 
 stop_monitoring() {
     local tag="$1"
-    for host in "$SCYLLA_PUBLIC_IP" "$LOADER_PUBLIC_IP"; do
+    for host in "${SCYLLA_PUBLIC_IPS[@]}" "$LOADER_PUBLIC_IP"; do
         remote "$host" bash -s <<STOP
 set -eu
 pidfile=~/monitor/${tag}_pids
@@ -515,8 +564,11 @@ collect_monitoring() {
     mkdir -p "$dest"
 
     # Scylla node: cpu + prometheus
-    scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$SCYLLA_PUBLIC_IP:~/monitor/${tag}_cpu.log" "$dest/scylla_cpu.log" 2>/dev/null || true
-    scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$SCYLLA_PUBLIC_IP:~/monitor/${tag}_prometheus.log" "$dest/scylla_prometheus.log" 2>/dev/null || true
+    for ((i=0; i<${#SCYLLA_PUBLIC_IPS[@]}; i++)); do
+        local n=$((i+1))
+        scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@${SCYLLA_PUBLIC_IPS[$i]}:~/monitor/${tag}_cpu.log" "$dest/scylla${n}_cpu.log" 2>/dev/null || true
+        scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@${SCYLLA_PUBLIC_IPS[$i]}:~/monitor/${tag}_prometheus.log" "$dest/scylla${n}_prometheus.log" 2>/dev/null || true
+    done
 
     # Loader node: cpu only
     scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$LOADER_PUBLIC_IP:~/monitor/${tag}_cpu.log" "$dest/loader_cpu.log" 2>/dev/null || true
@@ -532,21 +584,45 @@ run_one_pass() {
     local out_dir="$4"
     local host="$LOADER_PUBLIC_IP"
 
+    local wl="performance.rn"
+    local hot_items=""
+    local hot_partitions=""
+    local hot_items_per_partition=""
+    local cold_partitions=""
+    local hot_traffic_ratio=""
+
+    if is_hot_phase "$run_tag"; then
+        wl="hot_partition.rn"
+        compute_hot_keyspace_params
+        hot_items="$HOT_ITEMS"
+        hot_partitions="$HOT_PARTITIONS"
+        hot_items_per_partition="$HOT_ITEMS_PER_PARTITION"
+        cold_partitions="$COLD_PARTITIONS"
+        hot_traffic_ratio="$HOT_TRAFFIC_RATIO"
+        check_cluster_healthy || die "Cluster unhealthy before $run_tag"
+    fi
+
     mkdir -p "$out_dir"
     start_monitoring "$run_tag"
+
+    local endpoints_str=""
+    for ip in "${SCYLLA_PRIVATE_IPS[@]}"; do
+        endpoints_str+="http://$ip:8000 "
+    done
+    endpoints_str="${endpoints_str% }"
 
     if [[ "$tool" == "latte" ]]; then
         local params
         params=$(compute_latte_params "$inflight")
         local threads=${params%% *}
         local concurrency=${params##* }
-        log "  Latte: inflight=$inflight (${threads}t x ${concurrency}c) duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
+        log "  Latte: inflight=$inflight (${threads}t x ${concurrency}c) workload=$wl duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
         remote "$host" bash -s <<LATTE_RUN
 set -euo pipefail
 mkdir -p ~/output
 sudo docker run --rm --net host \
   -v "\$HOME/output:/output" \
-  -e ALT_ENDPOINT=http://${SCYLLA_PRIVATE_IP}:8000 \
+  -e ALT_ENDPOINT="${endpoints_str}" \
   -e TABLE=${TABLE} \
   -e ROW_COUNT=${ROW_COUNT} \
   -e THREADS=${threads} \
@@ -555,11 +631,17 @@ sudo docker run --rm --net host \
   -e FIELDLENGTH=${FIELDLENGTH} \
   -e READ_PROPORTION=${READ_PROPORTION} \
   -e UPDATE_PROPORTION=${UPDATE_PROPORTION} \
+  -e REQUEST_DISTRIBUTION=${REQUEST_DISTRIBUTION} \
   -e RUN_DURATION_SEC=${RUN_DURATION_SEC} \
   -e WARMUP_SEC=${WARMUP_SEC} \
   -e RATE=${RATE} \
   -e OUTDIR=/output \
-  -e LATTE_WORKLOAD=performance.rn \
+  -e LATTE_WORKLOAD=${wl} \
+  -e HOT_ITEMS=${hot_items} \
+  -e HOT_PARTITIONS=${hot_partitions} \
+  -e HOT_ITEMS_PER_PARTITION=${hot_items_per_partition} \
+  -e COLD_PARTITIONS=${cold_partitions} \
+  -e HOT_TRAFFIC_RATIO=${hot_traffic_ratio} \
   latte-alternator
 LATTE_RUN
         scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$host:~/output/latte_1.log" "$out_dir/" 2>/dev/null || true
@@ -574,13 +656,13 @@ LATTE_RUN
         local lb_policy="round-robin"
         [[ "$tool" == "latte-new-affinity" ]] && lb_policy="affinity-key-routing"
 
-        log "  Latte-New ($tool): inflight=$inflight (${threads}t x ${concurrency}c) policy=$lb_policy duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
+        log "  Latte-New ($tool): inflight=$inflight (${threads}t x ${concurrency}c) workload=$wl policy=$lb_policy duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
         remote "$host" bash -s <<LATTE_NEW_RUN
 set -euo pipefail
 mkdir -p ~/output
 sudo docker run --rm --net host \
   -v "\$HOME/output:/output" \
-  -e ALT_ENDPOINT=http://${SCYLLA_PRIVATE_IP}:8000 \
+  -e ALT_ENDPOINT="${endpoints_str}" \
   -e TABLE=${TABLE} \
   -e ROW_COUNT=${ROW_COUNT} \
   -e THREADS=${threads} \
@@ -589,11 +671,17 @@ sudo docker run --rm --net host \
   -e FIELDLENGTH=${FIELDLENGTH} \
   -e READ_PROPORTION=${READ_PROPORTION} \
   -e UPDATE_PROPORTION=${UPDATE_PROPORTION} \
+  -e REQUEST_DISTRIBUTION=${REQUEST_DISTRIBUTION} \
   -e RUN_DURATION_SEC=${RUN_DURATION_SEC} \
   -e WARMUP_SEC=${WARMUP_SEC} \
   -e RATE=${RATE} \
   -e OUTDIR=/output \
-  -e LATTE_WORKLOAD=performance.rn \
+  -e LATTE_WORKLOAD=${wl} \
+  -e HOT_ITEMS=${hot_items} \
+  -e HOT_PARTITIONS=${hot_partitions} \
+  -e HOT_ITEMS_PER_PARTITION=${hot_items_per_partition} \
+  -e COLD_PARTITIONS=${cold_partitions} \
+  -e HOT_TRAFFIC_RATIO=${hot_traffic_ratio} \
   -e LATTE_BINARY=latte-alternator-new \
   -e LB_POLICY="$lb_policy" \
   -e REQUEST_COMPRESSION="off" \
@@ -603,6 +691,8 @@ LATTE_NEW_RUN
         scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$host:~/output/latte_1.json" "$out_dir/" 2>/dev/null || true
         remote "$host" "rm -rf ~/output/*"
     fi
+
+    validate_benchmark_log "$out_dir/latte_1.log" || true
 
     stop_monitoring "$run_tag"
     collect_monitoring "$run_tag" "$out_dir"
@@ -616,9 +706,10 @@ LATTE_NEW_RUN
 #   get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,
 #   agg_request_mean_ms,agg_request_p99_ms,
 #   loader_cpu_pct,scylla_cpu_pct,
-#   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct
+#   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,
+#   scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio
 ###############################################################################
-CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct"
+CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
 
 # Extract average CPU% from mpstat -P ALL log (the "all" row)
 parse_cpu_pct() {
@@ -631,6 +722,15 @@ parse_cpu_pct() {
     fi
 }
 
+# Average CPU% across all scyllaN_cpu.log files collected by collect_monitoring
+parse_scylla_cpu_avg() {
+    local out_dir="$1"
+    awk '
+        /^ *[0-9].*all/ { idle += $NF; n++ }
+        END { if (n > 0) printf "%.1f", 100 - idle/n; else print "0" }
+    ' "$out_dir"/scylla*_cpu.log 2>/dev/null || echo "0"
+}
+
 parse_result_line() {
     local tool="$1"
     local inflight="$2"
@@ -641,16 +741,23 @@ parse_result_line() {
     local rate_str="${rate_val:-unlimited}"
     local loader_cpu scylla_cpu
     loader_cpu=$(parse_cpu_pct "$out_dir/loader_cpu.log")
-    scylla_cpu=$(parse_cpu_pct "$out_dir/scylla_cpu.log")
+    scylla_cpu=$(parse_scylla_cpu_avg "$out_dir")
 
     # Scylla server-side metrics from Prometheus
-    local scylla_ops="0" scylla_p99="0" scylla_reactor="0"
-    if [[ -f "$out_dir/scylla_prometheus.log" ]]; then
+    local scylla_ops="0" scylla_p99="0" scylla_reactor="0" scylla_max_node_ops="0" scylla_imbalance="0"
+    local -a prom_logs=()
+    for f in "$out_dir"/scylla*_prometheus.log; do
+        [[ -f "$f" ]] && prom_logs+=("$f")
+    done
+    [[ -f "$out_dir/scylla_prometheus.log" ]] && prom_logs+=("$out_dir/scylla_prometheus.log")
+    if [[ ${#prom_logs[@]} -gt 0 ]]; then
         local prom_json
-        prom_json=$(python3 "$BENCHMARKS_DIR/analyze_scylla_metrics.py" "$out_dir/scylla_prometheus.log" 2>/dev/null || echo "{}")
+        prom_json=$(python3 "$BENCHMARKS_DIR/analyze_scylla_metrics.py" "${prom_logs[@]}" 2>/dev/null || echo "{}")
         scylla_ops=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ops_per_sec','0'))" 2>/dev/null || echo "0")
         scylla_p99=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('p99_ms','0'))" 2>/dev/null || echo "0")
         scylla_reactor=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reactor_util_pct','0'))" 2>/dev/null || echo "0")
+        scylla_max_node_ops=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('max_node_ops_per_sec','0'))" 2>/dev/null || echo "0")
+        scylla_imbalance=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ops_imbalance_ratio','0'))" 2>/dev/null || echo "0")
     fi
 
     if [[ "$tool" == latte* ]]; then
@@ -658,7 +765,7 @@ parse_result_line() {
         if [[ -f "$jsonfile" ]]; then
             python3 "$BENCHMARKS_DIR/analyze_latte_results.py" "$out_dir" \
                 --csv-prefix "${tool},$inflight,$rate_str,$rep" \
-                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor"
+                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
         fi
     fi
 }
@@ -679,13 +786,14 @@ run_phase() {
     log "Inflight: $INFLIGHT_LIST | Reps: $REPETITIONS | Rows: $ROW_COUNT"
     echo
 
-    load_data
+    load_data "$phase_name"
 
     for inflight in $INFLIGHT_LIST; do
         for ((rep=1; rep<=REPETITIONS; rep++)); do
-            # Alternate tool order per rep to reduce ordering bias
             local tools
-            if (( rep % 2 == 1 )); then
+            if is_hot_phase "$phase_name"; then
+                tools=$(hot_phase_tools "$rep")
+            elif (( rep % 2 == 1 )); then
                 tools="latte latte-new-rr latte-new-affinity"
             else
                 tools="latte-new-affinity latte-new-rr latte"
@@ -702,6 +810,10 @@ run_phase() {
                 if [[ -n "$line" ]]; then
                     echo "$line" >> "$csv"
                     echo "  >> $line"
+                fi
+                if is_hot_phase "$phase_name"; then
+                    log "Hot phase cooldown (${HOT_COOLDOWN_SEC}s)..."
+                    sleep "$HOT_COOLDOWN_SEC"
                 fi
                 echo
             done
@@ -732,11 +844,17 @@ cmd_provision() {
     find_tagged_instances
     if instances_exist; then
         log "Existing instances found:"
-        log "  Scylla: $SCYLLA_INSTANCE_ID ($SCYLLA_PUBLIC_IP / $SCYLLA_PRIVATE_IP)"
+        for ((i=0; i<SCYLLA_NODES; i++)); do
+            log "  Scylla $((i+1)): ${SCYLLA_INSTANCE_IDS[$i]:-n/a} (${SCYLLA_PUBLIC_IPS[$i]:-n/a} / ${SCYLLA_PRIVATE_IPS[$i]:-n/a})"
+        done
         log "  Loader: $LOADER_INSTANCE_ID ($LOADER_PUBLIC_IP)"
         log "Reusing existing instances. Use 'teardown' first to start fresh."
         ship_images_to_loader
         return 0
+    fi
+
+    if bench_instances_found; then
+        die "Partial benchmark cluster found (${#SCYLLA_INSTANCE_IDS[@]}/$SCYLLA_NODES Scylla nodes). Run './aws-benchmark.sh teardown' first."
     fi
 
     ensure_key_pair
@@ -744,9 +862,12 @@ cmd_provision() {
     ensure_security_group
     find_ami
 
-    log "Launching Scylla instance ($SCYLLA_INSTANCE_TYPE)..."
-    SCYLLA_INSTANCE_ID=$(launch_instance "$SCYLLA_INSTANCE_TYPE" "latte-bench-scylla")
-    log "Scylla instance: $SCYLLA_INSTANCE_ID"
+    log "Launching $SCYLLA_NODES Scylla instances ($SCYLLA_INSTANCE_TYPE)..."
+    for ((i=1; i<=SCYLLA_NODES; i++)); do
+        local id=$(launch_instance "$SCYLLA_INSTANCE_TYPE" "latte-bench-scylla-$i")
+        SCYLLA_INSTANCE_IDS+=("$id")
+        log "Scylla instance $i: $id"
+    done
 
     log "Launching Loader instance ($LOADER_INSTANCE_TYPE)..."
     LOADER_INSTANCE_ID=$(launch_instance "$LOADER_INSTANCE_TYPE" "latte-bench-loader")
@@ -754,26 +875,38 @@ cmd_provision() {
 
     log "Waiting for instances to be running..."
     aws ec2 wait instance-running --region "$REGION" \
-        --instance-ids "$SCYLLA_INSTANCE_ID" "$LOADER_INSTANCE_ID"
+        --instance-ids "${SCYLLA_INSTANCE_IDS[@]}" "$LOADER_INSTANCE_ID"
 
-    SCYLLA_PUBLIC_IP=$(aws ec2 describe-instances --region "$REGION" \
-        --instance-ids "$SCYLLA_INSTANCE_ID" \
-        --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-    SCYLLA_PRIVATE_IP=$(aws ec2 describe-instances --region "$REGION" \
-        --instance-ids "$SCYLLA_INSTANCE_ID" \
-        --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+    SCYLLA_PUBLIC_IPS=()
+    SCYLLA_PRIVATE_IPS=()
+    for id in "${SCYLLA_INSTANCE_IDS[@]}"; do
+        pub=$(aws ec2 describe-instances --region "$REGION" \
+            --instance-ids "$id" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+        priv=$(aws ec2 describe-instances --region "$REGION" \
+            --instance-ids "$id" \
+            --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+        SCYLLA_PUBLIC_IPS+=("$pub")
+        SCYLLA_PRIVATE_IPS+=("$priv")
+        log "Scylla ($id): public=$pub private=$priv"
+    done
+
     LOADER_PUBLIC_IP=$(aws ec2 describe-instances --region "$REGION" \
         --instance-ids "$LOADER_INSTANCE_ID" \
         --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-
-    log "Scylla: public=$SCYLLA_PUBLIC_IP private=$SCYLLA_PRIVATE_IP"
     log "Loader: public=$LOADER_PUBLIC_IP"
 
-    wait_for_ssh "$SCYLLA_PUBLIC_IP" &
+    for pub in "${SCYLLA_PUBLIC_IPS[@]}"; do
+        wait_for_ssh "$pub" &
+    done
     wait_for_ssh "$LOADER_PUBLIC_IP" &
     wait
 
-    setup_scylla
+    local seed_ip="${SCYLLA_PRIVATE_IPS[0]}"
+    for ((i=0; i<SCYLLA_NODES; i++)); do
+        setup_scylla "${SCYLLA_PUBLIC_IPS[$i]}" "${SCYLLA_PRIVATE_IPS[$i]}" "$seed_ip" &
+    done
+    wait
     setup_loader
     ship_images_to_loader
 
@@ -781,19 +914,23 @@ cmd_provision() {
 }
 
 cmd_teardown() {
-    find_tagged_instances
-    if ! instances_exist; then
-        log "No active benchmark instances found."
+    find_tagged_instances "pending,running,stopping,stopped"
+    if ! bench_instances_found; then
+        log "No benchmark instances found."
         return 0
     fi
 
     log "Terminating instances..."
     local ids=()
-    [[ -n "$SCYLLA_INSTANCE_ID" ]] && ids+=("$SCYLLA_INSTANCE_ID")
+    for id in "${SCYLLA_INSTANCE_IDS[@]}"; do
+        [[ -n "$id" ]] && ids+=("$id")
+    done
     [[ -n "$LOADER_INSTANCE_ID" ]] && ids+=("$LOADER_INSTANCE_ID")
-    aws ec2 terminate-instances --region "$REGION" --instance-ids "${ids[@]}" >/dev/null 2>&1 || true
-    log "Waiting for termination..."
-    aws ec2 wait instance-terminated --region "$REGION" --instance-ids "${ids[@]}" 2>/dev/null || true
+    if [[ ${#ids[@]} -gt 0 ]]; then
+        aws ec2 terminate-instances --region "$REGION" --instance-ids "${ids[@]}" >/dev/null 2>&1 || true
+        log "Waiting for termination..."
+        aws ec2 wait instance-terminated --region "$REGION" --instance-ids "${ids[@]}" 2>/dev/null || true
+    fi
     log "Teardown complete."
 }
 
@@ -803,9 +940,14 @@ cmd_run() {
 
     find_tagged_instances
     if ! instances_exist; then
+        if bench_instances_found; then
+            die "Incomplete benchmark cluster (${#SCYLLA_INSTANCE_IDS[@]}/$SCYLLA_NODES Scylla nodes). Run './aws-benchmark.sh teardown' and reprovision."
+        fi
         die "No active instances. Run './aws-benchmark.sh provision' first."
     fi
-    log "Using instances: Scylla=$SCYLLA_PUBLIC_IP Loader=$LOADER_PUBLIC_IP"
+    log "Using instances: Scylla=${SCYLLA_PUBLIC_IPS[*]} Loader=$LOADER_PUBLIC_IP"
+
+    ship_images_to_loader
 
     case "$phase" in
         smoke)
@@ -816,6 +958,11 @@ cmd_run() {
             RATE=5000
             INFLIGHT_LIST="32"
             run_phase "smoke"
+            HOT_TRAFFIC_RATIO=0.99
+            HOT_READ_PROPORTION=0.3
+            HOT_UPDATE_PROPORTION=0.7
+            HOT_PARTITIONS=32
+            run_phase_hot "smoke-hot"
             ;;
         latency)
             ROW_COUNT=1000000
@@ -825,6 +972,11 @@ cmd_run() {
             RATE=5000
             INFLIGHT_LIST="32"
             run_phase "latency"
+            HOT_TRAFFIC_RATIO=0.99
+            HOT_READ_PROPORTION=0.3
+            HOT_UPDATE_PROPORTION=0.7
+            HOT_PARTITIONS=32
+            run_phase_hot "latency-hot"
             ;;
         throughput)
             ROW_COUNT=1000000
@@ -834,6 +986,11 @@ cmd_run() {
             RATE=""
             INFLIGHT_LIST="128 256"
             run_phase "throughput"
+            HOT_TRAFFIC_RATIO=0.99
+            HOT_READ_PROPORTION=0.3
+            HOT_UPDATE_PROPORTION=0.7
+            HOT_PARTITIONS=32
+            run_phase_hot "throughput-hot"
             ;;
         *)
             die "Unknown phase: $phase. Valid: smoke, latency, throughput"
@@ -875,9 +1032,9 @@ main() {
             echo "Workflow:"
             echo "  1. ./aws-benchmark.sh build       # Local: docker build + pull"
             echo "  2. ./aws-benchmark.sh provision    # EC2: launch + setup"
-            echo "  3. ./aws-benchmark.sh run smoke    # Validate pipeline + parsers"
-            echo "  4. ./aws-benchmark.sh run latency  # Rate-limited comparison"
-            echo "  5. ./aws-benchmark.sh run throughput # Saturated comparison"
+            echo "  3. ./aws-benchmark.sh run smoke    # Validate pipeline + parsers (+ hot copy)"
+            echo "  4. ./aws-benchmark.sh run latency  # Rate-limited comparison (+ hot copy)"
+            echo "  5. ./aws-benchmark.sh run throughput # Saturated comparison (+ hot copy)"
             echo "  6. ./aws-benchmark.sh report       # Show all results"
             echo "  7. ./aws-benchmark.sh teardown     # Destroy instances"
             exit 1

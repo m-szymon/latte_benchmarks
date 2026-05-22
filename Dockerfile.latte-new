@@ -9,6 +9,7 @@ RUN for i in 1 2 3 4 5; do apt-get update && break || sleep 15; done && \
     apt-get install -y ca-certificates curl python3 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/latte/target/release/latte-alternator-new /usr/local/bin/latte-alternator-new
 COPY performance.rn /workload/performance.rn
+COPY hot_partition.rn /workload/hot_partition.rn
 COPY run-latte-benchmark.sh /usr/local/bin/run-benchmark.sh
 COPY analyze_latte_results.py /usr/local/bin/analyze_latte_results.py
 RUN chmod +x /usr/local/bin/run-benchmark.sh

@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-
 def parse_latte_json(path):
     with open(path, 'r') as f:
         d = json.load(f)
@@ -22,13 +21,11 @@ def parse_latte_json(path):
     def get_m(name):
         return fn.get(name, {}).get('mean', {}).get('value', 0)
 
-    # Cycle latency per-op
     ga = get_m('get')
     g99 = get_p('get', p99i)
     ua = get_m('update')
     u99 = get_p('update', p99i)
 
-    # Request latency (aggregate only)
     rl = r.get('request_latency', {})
     rl_mean = rl.get('mean', {}).get('value', 0)
     rl_p99_val = 0

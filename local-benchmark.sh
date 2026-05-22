@@ -5,9 +5,9 @@
 # Usage:
 #   ./local-benchmark.sh build           # Local: docker build latte
 #   ./local-benchmark.sh provision       # Local: Start Scylla container
-#   ./local-benchmark.sh run smoke       # Sanity check (60s, 1 rep)
-#   ./local-benchmark.sh run latency     # Rate-limited comparison (120s, 2 reps)
-#   ./local-benchmark.sh run throughput  # Saturated comparison (120s, 2 reps, 2 inflights)
+#   ./local-benchmark.sh run smoke       # Sanity check (10s, 2 reps, rate 500) + hot copy
+#   ./local-benchmark.sh run latency     # Rate-limited comparison (30s, 2 reps) + hot copy
+#   ./local-benchmark.sh run throughput  # Saturated comparison (30s base + 120s hot, 2 reps) + hot copy
 #   ./local-benchmark.sh teardown        # Stop and remove containers
 #   ./local-benchmark.sh report          # Aggregate all summary.csv tables
 #
@@ -34,6 +34,7 @@ FIELDCOUNT="${FIELDCOUNT:-10}"
 FIELDLENGTH="${FIELDLENGTH:-512}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
 UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
+REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION:-uniform}"
 
 # Latte thread/concurrency: threads = min(inflight, hint), concurrency = inflight/threads
 LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-8}"
@@ -45,6 +46,8 @@ MONITOR_INTERVAL=5
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCHMARKS_DIR="${BENCHMARKS_DIR:-$SCRIPT_DIR}"
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/benchmark-results-local}"
+# shellcheck source=benchmark-hot-common.sh
+source "$SCRIPT_DIR/benchmark-hot-common.sh"
 
 ###############################################################################
 # Internal state
@@ -135,7 +138,7 @@ setup_scylla() {
         if [[ "$all_up" == "true" ]]; then
             # Also check node count via nodetool
             local live_nodes
-            live_nodes=$(docker exec "${SCYLLA_CONTAINER_PREFIX}-1" nodetool status | grep -c "^UN" || echo "0")
+            live_nodes=$(docker exec "${SCYLLA_CONTAINER_PREFIX}-1" nodetool status | awk '/^UN/ {n++} END {print n+0}')
             if [[ "$live_nodes" -ge "$SCYLLA_NODES" ]]; then
                 log "Scylla cluster is healthy with $live_nodes nodes"
                 find_containers
@@ -145,6 +148,21 @@ setup_scylla() {
         sleep 5
     done
     die "Scylla cluster did not become healthy within 300s"
+}
+
+check_cluster_healthy() {
+    for ((n=1; n<=SCYLLA_NODES; n++)); do
+        if ! docker exec "${SCYLLA_CONTAINER_PREFIX}-$n" cqlsh -e "SELECT peer FROM system.peers" &>/dev/null; then
+            return 1
+        fi
+    done
+    local live_nodes
+    live_nodes=$(docker exec "${SCYLLA_CONTAINER_PREFIX}-1" nodetool status | awk '/^UN/ {n++} END {print n+0}')
+    if [[ "$live_nodes" -lt "$SCYLLA_NODES" ]]; then
+        log "WARN: Cluster health check: $live_nodes/$SCYLLA_NODES nodes UP"
+        return 1
+    fi
+    return 0
 }
 
 ###############################################################################
@@ -171,7 +189,7 @@ build_local_images() {
     log "Latte-new image built"
 
     log "Local images ready:"
-    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator
+    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator latte-alternator-new
 }
 
 verify_local_images() {
@@ -188,26 +206,50 @@ verify_local_images() {
 # Load data
 ###############################################################################
 load_data() {
-    log "Loading $ROW_COUNT rows into Scylla cluster..."
+    local phase_name="${1:-}"
+    local wl="performance.rn"
+    local -a extra_args=()
+
+    if [[ "$phase_name" == *"-hot" ]]; then
+        wl="hot_partition.rn"
+        compute_hot_keyspace_params
+        extra_args+=(
+            -P "hot_partitions=${HOT_PARTITIONS}"
+            -P "hot_items_per_partition=${HOT_ITEMS_PER_PARTITION}"
+            -P "cold_partitions=${COLD_PARTITIONS}"
+        )
+    else
+        extra_args+=(
+            -P "row_count=${ROW_COUNT}"
+            -P 'requestdistribution="uniform"'
+        )
+    fi
+
+    log_load_data "$phase_name" "$wl"
+
+    local endpoints_str=""
+    for ((n=1; n<=SCYLLA_NODES; n++)); do
+        endpoints_str+="http://${SCYLLA_CONTAINER_PREFIX}-$n:8000 "
+    done
+    endpoints_str="${endpoints_str% }"
 
     docker run --rm --network "$NETWORK_NAME" \
-      -v "$BENCHMARKS_DIR/performance.rn:/performance.rn:ro" \
+      -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
       --entrypoint latte-alternator \
       latte-alternator \
-      schema /performance.rn "http://${SCYLLA_CONTAINER_PREFIX}-1:8000" \
+      schema /${wl} $endpoints_str \
         -P "table=\"${TABLE}\""
 
     docker run --rm --network "$NETWORK_NAME" \
-      -v "$BENCHMARKS_DIR/performance.rn:/performance.rn:ro" \
+      -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
       --entrypoint latte-alternator \
       latte-alternator \
-      load /performance.rn "http://${SCYLLA_CONTAINER_PREFIX}-1:8000" \
+      load /${wl} $endpoints_str \
         -t 8 --concurrency 128 \
         -P "table=\"${TABLE}\"" \
-        -P "row_count=${ROW_COUNT}" \
         -P "fieldcount=${FIELDCOUNT}" \
         -P "fieldlength=${FIELDLENGTH}" \
-        -P 'requestdistribution="uniform"'
+        "${extra_args[@]}"
     log "Data loaded"
 }
 
@@ -228,8 +270,17 @@ start_monitoring() {
     done" > "$RESULTS_DIR/monitor/${tag}_docker_stats.log" 2>&1 &
     echo $! > "$RESULTS_DIR/monitor/${tag}_pids"
 
-    # Prometheus scrape Scylla
-    nohup bash -c "while true; do echo \"---TIMESTAMP \$(date +%s)---\"; curl -s http://localhost:9180/metrics 2>/dev/null || true; sleep ${MONITOR_INTERVAL}; done" > "$RESULTS_DIR/monitor/${tag}_prometheus.log" 2>&1 &
+    # Prometheus scrape all Scylla nodes (ports 9180..9180+N-1)
+    local prom_ports
+    prom_ports=$(seq -s ' ' 9180 $((9179 + SCYLLA_NODES)))
+    nohup bash -c "while true; do \
+        echo \"---TIMESTAMP \$(date +%s)---\"; \
+        for p in ${prom_ports}; do \
+            echo \"---NODE \$p---\"; \
+            curl -s http://localhost:\$p/metrics 2>/dev/null || true; \
+        done; \
+        sleep ${MONITOR_INTERVAL}; \
+    done" > "$RESULTS_DIR/monitor/${tag}_prometheus.log" 2>&1 &
     echo $! >> "$RESULTS_DIR/monitor/${tag}_pids"
 }
 
@@ -261,6 +312,25 @@ run_one_pass() {
     local run_tag="$3"
     local out_dir="$4"
 
+    local wl="performance.rn"
+    local hot_items=""
+    local hot_partitions=""
+    local hot_items_per_partition=""
+    local cold_partitions=""
+
+    local hot_traffic_ratio=""
+
+    if is_hot_phase "$run_tag"; then
+        wl="hot_partition.rn"
+        compute_hot_keyspace_params
+        hot_items="$HOT_ITEMS"
+        hot_partitions="$HOT_PARTITIONS"
+        hot_items_per_partition="$HOT_ITEMS_PER_PARTITION"
+        cold_partitions="$COLD_PARTITIONS"
+        hot_traffic_ratio="$HOT_TRAFFIC_RATIO"
+        check_cluster_healthy || die "Cluster unhealthy before $run_tag"
+    fi
+
     mkdir -p "$out_dir"
     start_monitoring "$run_tag"
 
@@ -268,16 +338,23 @@ run_one_pass() {
     # Ensure out_dir is absolute for docker volume mapping
     output_vol=$(cd "$out_dir" && pwd)
 
+    local endpoints_str=""
+    for ((n=1; n<=SCYLLA_NODES; n++)); do
+        endpoints_str+="http://${SCYLLA_CONTAINER_PREFIX}-$n:8000 "
+    done
+    # Trim trailing space
+    endpoints_str="${endpoints_str% }"
+
     if [[ "$tool" == "latte" ]]; then
         local params
         params=$(compute_latte_params "$inflight")
         local threads=${params%% *}
         local concurrency=${params##* }
-        log "  Latte: inflight=$inflight (${threads}t x ${concurrency}c) duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
-        docker run --rm --network "$NETWORK_NAME" --name "$LOADER_CONTAINER" \
+        log "  Latte: inflight=$inflight (${threads}t x ${concurrency}c) workload=$wl duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}${hot_traffic_ratio:+ hot_ratio=$hot_traffic_ratio}"
+        docker run --cpus="8" --rm --network "$NETWORK_NAME" --name "$LOADER_CONTAINER" \
           -v "$output_vol:/output" \
-          -v "$BENCHMARKS_DIR/performance.rn:/performance.rn:ro" \
-          -e ALT_ENDPOINT="http://${SCYLLA_CONTAINER_PREFIX}-1:8000" \
+          -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
+          -e ALT_ENDPOINT="$endpoints_str" \
           -e TABLE="${TABLE}" \
           -e ROW_COUNT="${ROW_COUNT}" \
           -e THREADS="${threads}" \
@@ -286,11 +363,17 @@ run_one_pass() {
           -e FIELDLENGTH="${FIELDLENGTH}" \
           -e READ_PROPORTION="${READ_PROPORTION}" \
           -e UPDATE_PROPORTION="${UPDATE_PROPORTION}" \
+          -e REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION}" \
           -e RUN_DURATION_SEC="${RUN_DURATION_SEC}" \
           -e WARMUP_SEC="${WARMUP_SEC}" \
           -e RATE="${RATE}" \
           -e OUTDIR=/output \
-          -e LATTE_WORKLOAD=/performance.rn \
+          -e LATTE_WORKLOAD=/${wl} \
+          -e HOT_ITEMS="${hot_items}" \
+          -e HOT_PARTITIONS="${hot_partitions}" \
+          -e HOT_ITEMS_PER_PARTITION="${hot_items_per_partition}" \
+          -e COLD_PARTITIONS="${cold_partitions}" \
+          -e HOT_TRAFFIC_RATIO="${hot_traffic_ratio}" \
           latte-alternator
 
     elif [[ "$tool" == "latte-new-rr" || "$tool" == "latte-new-affinity" ]]; then
@@ -301,11 +384,11 @@ run_one_pass() {
         local lb_policy="round-robin"
         [[ "$tool" == "latte-new-affinity" ]] && lb_policy="affinity-key-routing"
 
-        log "  Latte-New ($tool): inflight=$inflight (${threads}t x ${concurrency}c) policy=$lb_policy duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}"
-        docker run --rm --network "$NETWORK_NAME" --name "$LOADER_CONTAINER" \
+        log "  Latte-New ($tool): inflight=$inflight (${threads}t x ${concurrency}c) workload=$wl policy=$lb_policy duration=${RUN_DURATION_SEC}s warmup=${WARMUP_SEC}s rate=${RATE:-unlimited}${hot_traffic_ratio:+ hot_ratio=$hot_traffic_ratio}"
+        docker run --cpus="8" --rm --network "$NETWORK_NAME" --name "$LOADER_CONTAINER" \
           -v "$output_vol:/output" \
-          -v "$BENCHMARKS_DIR/performance.rn:/performance.rn:ro" \
-          -e ALT_ENDPOINT="http://${SCYLLA_CONTAINER_PREFIX}-1:8000" \
+          -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
+          -e ALT_ENDPOINT="$endpoints_str" \
           -e TABLE="${TABLE}" \
           -e ROW_COUNT="${ROW_COUNT}" \
           -e THREADS="${threads}" \
@@ -314,16 +397,24 @@ run_one_pass() {
           -e FIELDLENGTH="${FIELDLENGTH}" \
           -e READ_PROPORTION="${READ_PROPORTION}" \
           -e UPDATE_PROPORTION="${UPDATE_PROPORTION}" \
+          -e REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION}" \
           -e RUN_DURATION_SEC="${RUN_DURATION_SEC}" \
           -e WARMUP_SEC="${WARMUP_SEC}" \
           -e RATE="${RATE}" \
           -e OUTDIR=/output \
-          -e LATTE_WORKLOAD=/performance.rn \
+          -e LATTE_WORKLOAD=/${wl} \
+          -e HOT_ITEMS="${hot_items}" \
+          -e HOT_PARTITIONS="${hot_partitions}" \
+          -e HOT_ITEMS_PER_PARTITION="${hot_items_per_partition}" \
+          -e COLD_PARTITIONS="${cold_partitions}" \
+          -e HOT_TRAFFIC_RATIO="${hot_traffic_ratio}" \
           -e LATTE_BINARY=latte-alternator-new \
           -e LB_POLICY="$lb_policy" \
           -e REQUEST_COMPRESSION="off" \
           latte-alternator-new
     fi
+
+    validate_benchmark_log "$out_dir/latte_1.log" || true
 
     stop_monitoring "$run_tag"
     collect_monitoring "$run_tag" "$out_dir"
@@ -337,9 +428,10 @@ run_one_pass() {
 #   get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,
 #   agg_request_mean_ms,agg_request_p99_ms,
 #   loader_cpu_pct,scylla_cpu_pct,
-#   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct
+#   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,
+#   scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio
 ###############################################################################
-CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct"
+CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
 
 # Extract average CPU% from docker stats log
 parse_docker_cpu() {
@@ -367,13 +459,15 @@ parse_result_line() {
     scylla_cpu=$(parse_docker_cpu "$out_dir/docker_stats.log" "$SCYLLA_CONTAINER_PREFIX")
 
     # Scylla server-side metrics from Prometheus
-    local scylla_ops="0" scylla_p99="0" scylla_reactor="0"
+    local scylla_ops="0" scylla_p99="0" scylla_reactor="0" scylla_max_node_ops="0" scylla_imbalance="0"
     if [[ -f "$out_dir/scylla_prometheus.log" ]]; then
         local prom_json
         prom_json=$(python3 "$BENCHMARKS_DIR/analyze_scylla_metrics.py" "$out_dir/scylla_prometheus.log" 2>/dev/null || echo "{}")
         scylla_ops=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ops_per_sec','0'))" 2>/dev/null || echo "0")
         scylla_p99=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('p99_ms','0'))" 2>/dev/null || echo "0")
         scylla_reactor=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reactor_util_pct','0'))" 2>/dev/null || echo "0")
+        scylla_max_node_ops=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('max_node_ops_per_sec','0'))" 2>/dev/null || echo "0")
+        scylla_imbalance=$(echo "$prom_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ops_imbalance_ratio','0'))" 2>/dev/null || echo "0")
     fi
 
     if [[ "$tool" == latte* ]]; then
@@ -381,7 +475,7 @@ parse_result_line() {
         if [[ -f "$jsonfile" ]]; then
             python3 "$BENCHMARKS_DIR/analyze_latte_results.py" "$out_dir" \
                 --csv-prefix "$tool,$inflight,$rate_str,$rep" \
-                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor"
+                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
         fi
     fi
 }
@@ -402,13 +496,14 @@ run_phase() {
     log "Inflight: $INFLIGHT_LIST | Reps: $REPETITIONS | Rows: $ROW_COUNT"
     echo
 
-    load_data
+    load_data "$phase_name"
 
     for inflight in $INFLIGHT_LIST; do
         for ((rep=1; rep<=REPETITIONS; rep++)); do
-            # Alternate tool order per rep to reduce ordering bias
             local tools
-            if (( rep % 2 == 1 )); then
+            if is_hot_phase "$phase_name"; then
+                tools=$(hot_phase_tools "$rep")
+            elif (( rep % 2 == 1 )); then
                 tools="latte latte-new-rr latte-new-affinity"
             else
                 tools="latte-new-affinity latte-new-rr latte"
@@ -425,6 +520,10 @@ run_phase() {
                 if [[ -n "$line" ]]; then
                     echo "$line" >> "$csv"
                     echo "  >> $line"
+                fi
+                if is_hot_phase "$phase_name"; then
+                    log "Hot phase cooldown (${HOT_COOLDOWN_SEC}s)..."
+                    sleep "$HOT_COOLDOWN_SEC"
                 fi
                 echo
             done
@@ -489,28 +588,40 @@ cmd_run() {
             ROW_COUNT=10000
             RUN_DURATION_SEC=10
             WARMUP_SEC=0
-            REPETITIONS=1
-            RATE=1000
+            REPETITIONS=2
+            RATE=500
             INFLIGHT_LIST="16"
             run_phase "smoke"
+            run_phase_hot "smoke-hot"
             ;;
         latency)
             ROW_COUNT=100000
             RUN_DURATION_SEC=30
             WARMUP_SEC=10
-            REPETITIONS=1
-            RATE=1000
+            REPETITIONS=2
+            RATE=500
             INFLIGHT_LIST="32"
             run_phase "latency"
+            HOT_TRAFFIC_RATIO=0.99
+            HOT_READ_PROPORTION=0.3
+            HOT_UPDATE_PROPORTION=0.7
+            run_phase_hot "latency-hot"
             ;;
         throughput)
             ROW_COUNT=100000
             RUN_DURATION_SEC=30
             WARMUP_SEC=10
-            REPETITIONS=1
+            REPETITIONS=2
             RATE=""
             INFLIGHT_LIST="64 128"
             run_phase "throughput"
+            RUN_DURATION_SEC=120
+            WARMUP_SEC=30
+            INFLIGHT_LIST="128 256"
+            HOT_TRAFFIC_RATIO=0.99
+            HOT_READ_PROPORTION=0.3
+            HOT_UPDATE_PROPORTION=0.7
+            run_phase_hot "throughput-hot"
             ;;
         *)
             die "Unknown phase: $phase. Valid: smoke, latency, throughput"
@@ -552,9 +663,9 @@ main() {
             echo "Workflow:"
             echo "  1. $0 build       # Local: docker build + pull"
             echo "  2. $0 provision    # Start Scylla container"
-            echo "  3. $0 run smoke    # Validate pipeline + parsers"
-            echo "  4. $0 run latency  # Rate-limited comparison"
-            echo "  5. $0 run throughput # Saturated comparison"
+            echo "  3. $0 run smoke    # Validate pipeline + parsers (+ hot copy)"
+            echo "  4. $0 run latency  # Rate-limited comparison (+ hot copy)"
+            echo "  5. $0 run throughput # Saturated comparison (+ hot copy)"
             echo "  6. $0 report       # Show all results"
             echo "  7. $0 teardown     # Remove containers"
             exit 1
