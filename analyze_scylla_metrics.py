@@ -28,16 +28,17 @@ def parse_snapshots(path):
     current_ts = None
     current_lines = []
 
-    with open(path) as f:
-        for line in f:
-            m = re.match(r'^---TIMESTAMP (\d+)---', line)
-            if m:
-                if current_ts is not None and current_lines:
-                    snapshots.append((int(current_ts), current_lines))
-                current_ts = m.group(1)
-                current_lines = []
-            elif current_ts is not None and not line.startswith('#') and line.strip():
-                current_lines.append(line.strip())
+    with open(path, 'rb') as f:
+        text = f.read().replace(b'\x00', b'').decode('utf-8', errors='replace')
+    for line in text.splitlines():
+        m = re.match(r'^---TIMESTAMP (\d+)---', line)
+        if m:
+            if current_ts is not None and current_lines:
+                snapshots.append((int(current_ts), current_lines))
+            current_ts = m.group(1)
+            current_lines = []
+        elif current_ts is not None and not line.startswith('#') and line.strip():
+            current_lines.append(line.strip())
 
     if current_ts is not None and current_lines:
         snapshots.append((int(current_ts), current_lines))

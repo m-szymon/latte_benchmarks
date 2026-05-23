@@ -306,7 +306,7 @@ setup_scylla() {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 for i in 1 2 3 4 5; do sudo apt-get update -qq && break || sleep 15; done
-sudo apt-get install -y -qq docker.io docker-compose nvme-cli parted sysstat
+sudo apt-get install -y -qq curl docker.io docker-compose nvme-cli parted sysstat
 sudo systemctl enable --now docker
 sudo usermod -aG docker ubuntu
 SCYLLA_APT
@@ -531,12 +531,15 @@ echo \$! > ~/monitor/${tag}_pids
 MON
     done
 
-    # Prometheus scrape on Scylla node (always-on)
-    for host in "${SCYLLA_PUBLIC_IPS[@]}"; do
+    # Prometheus scrape on each Scylla node (metrics bind to --listen-address, not localhost)
+    for ((i=0; i<${#SCYLLA_PUBLIC_IPS[@]}; i++)); do
+        local host="${SCYLLA_PUBLIC_IPS[$i]}"
+        local prom_ip="${SCYLLA_PRIVATE_IPS[$i]}"
         remote "$host" bash -s <<PROM
 set -eu
 mkdir -p ~/monitor
-nohup bash -c 'while true; do echo "---TIMESTAMP \$(date +%s)---"; curl -s http://localhost:9180/metrics 2>/dev/null || true; sleep ${MONITOR_INTERVAL}; done' > ~/monitor/${tag}_prometheus.log 2>&1 &
+: > ~/monitor/${tag}_prometheus.log
+nohup bash -c 'while true; do echo "---TIMESTAMP \$(date +%s)---"; curl -sf http://${prom_ip}:9180/metrics || true; sleep ${MONITOR_INTERVAL}; done' >> ~/monitor/${tag}_prometheus.log 2>&1 &
 echo \$! >> ~/monitor/${tag}_pids
 PROM
     done
@@ -551,9 +554,11 @@ pidfile=~/monitor/${tag}_pids
 if [ -f "\$pidfile" ]; then
     while read -r pid; do
         kill "\$pid" 2>/dev/null || true
+        pkill -P "\$pid" 2>/dev/null || true
     done < "\$pidfile"
     rm -f "\$pidfile"
 fi
+pkill -f "~/monitor/${tag}_" 2>/dev/null || true
 STOP
     done
 }
