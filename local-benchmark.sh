@@ -30,6 +30,7 @@ ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-always_use_lwt}"
 
 # Workload parameters
 TABLE="${TABLE:-latte_performance}"
+HOT_TABLE="${HOT_TABLE:-latte_hot_partition}"
 FIELDCOUNT="${FIELDCOUNT:-10}"
 FIELDLENGTH="${FIELDLENGTH:-512}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
@@ -191,7 +192,7 @@ build_local_images() {
     log "Latte-new image built"
 
     log "Local images ready:"
-    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator latte-alternator-new
+    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' | grep -E 'latte-alternator'
 }
 
 verify_local_images() {
@@ -210,10 +211,12 @@ verify_local_images() {
 load_data() {
     local phase_name="${1:-}"
     local wl="performance.rn"
+    local phase_table="$TABLE"
     local -a extra_args=()
 
     if [[ "$phase_name" == *"-hot" ]]; then
         wl="hot_partition.rn"
+        phase_table="$HOT_TABLE"
         compute_hot_keyspace_params
         extra_args+=(
             -P "hot_partitions=${HOT_PARTITIONS}"
@@ -240,7 +243,7 @@ load_data() {
       --entrypoint latte-alternator \
       latte-alternator \
       schema /${wl} $endpoints_str \
-        -P "table=\"${TABLE}\""
+        -P "table=\"${phase_table}\""
 
     docker run --rm --network "$NETWORK_NAME" \
       -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
@@ -248,7 +251,7 @@ load_data() {
       latte-alternator \
       load /${wl} $endpoints_str \
         -t 8 --concurrency 128 \
-        -P "table=\"${TABLE}\"" \
+        -P "table=\"${phase_table}\"" \
         -P "fieldcount=${FIELDCOUNT}" \
         -P "fieldlength=${FIELDLENGTH}" \
         "${extra_args[@]}"
@@ -315,6 +318,7 @@ run_one_pass() {
     local out_dir="$4"
 
     local wl="performance.rn"
+    local phase_table="$TABLE"
     local hot_items=""
     local hot_partitions=""
     local hot_items_per_partition=""
@@ -324,6 +328,7 @@ run_one_pass() {
 
     if is_hot_phase "$run_tag"; then
         wl="hot_partition.rn"
+        phase_table="$HOT_TABLE"
         compute_hot_keyspace_params
         hot_items="$HOT_ITEMS"
         hot_partitions="$HOT_PARTITIONS"
@@ -357,7 +362,7 @@ run_one_pass() {
           -v "$output_vol:/output" \
           -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
           -e ALT_ENDPOINT="$endpoints_str" \
-          -e TABLE="${TABLE}" \
+          -e TABLE="${phase_table}" \
           -e ROW_COUNT="${ROW_COUNT}" \
           -e THREADS="${threads}" \
           -e CONCURRENCY="${concurrency}" \
@@ -391,7 +396,7 @@ run_one_pass() {
           -v "$output_vol:/output" \
           -v "$BENCHMARKS_DIR/${wl}:/${wl}:ro" \
           -e ALT_ENDPOINT="$endpoints_str" \
-          -e TABLE="${TABLE}" \
+          -e TABLE="${phase_table}" \
           -e ROW_COUNT="${ROW_COUNT}" \
           -e THREADS="${threads}" \
           -e CONCURRENCY="${concurrency}" \

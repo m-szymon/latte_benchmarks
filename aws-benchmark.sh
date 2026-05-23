@@ -38,6 +38,7 @@ ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-always_use_lwt}"
 
 # Workload parameters
 TABLE="${TABLE:-latte_performance}"
+HOT_TABLE="${HOT_TABLE:-latte_hot_partition}"
 FIELDCOUNT="${FIELDCOUNT:-10}"
 FIELDLENGTH="${FIELDLENGTH:-512}"
 READ_PROPORTION="${READ_PROPORTION:-0.5}"
@@ -431,7 +432,7 @@ build_local_images() {
     log "Latte-new image built"
 
     log "Local images ready:"
-    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' latte-alternator latte-alternator-new
+    docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  ({{.CreatedSince}})' | grep -E 'latte-alternator'
 }
 
 verify_local_images() {
@@ -465,10 +466,12 @@ ship_images_to_loader() {
 load_data() {
     local phase_name="${1:-}"
     local wl="performance.rn"
+    local phase_table="$TABLE"
     local -a extra_args=()
 
     if [[ "$phase_name" == *"-hot" ]]; then
         wl="hot_partition.rn"
+        phase_table="$HOT_TABLE"
         compute_hot_keyspace_params
         extra_args+=(
             -P "hot_partitions=${HOT_PARTITIONS}"
@@ -501,14 +504,14 @@ sudo docker run --rm --net host \
   --entrypoint latte-alternator \
   latte-alternator \
   schema ${wl} ${endpoints_str} \
-    -P "table=\"${TABLE}\""
+    -P "table=\"${phase_table}\""
 
 sudo docker run --rm --net host \
   --entrypoint latte-alternator \
   latte-alternator \
   load ${wl} ${endpoints_str} \
     -t 8 --concurrency 128 \
-    -P "table=\"${TABLE}\"" \
+    -P "table=\"${phase_table}\"" \
     -P "fieldcount=${FIELDCOUNT}" \
     -P "fieldlength=${FIELDLENGTH}" \
     "\${extra_args[@]}"
@@ -521,6 +524,7 @@ LOAD_SCRIPT
 ###############################################################################
 start_monitoring() {
     local tag="$1"
+    local host
     log "Starting monitoring: $tag"
 
     # mpstat on both hosts (single collector per host)
@@ -549,6 +553,7 @@ PROM
 
 stop_monitoring() {
     local tag="$1"
+    local host
     for host in "${SCYLLA_PUBLIC_IPS[@]}" "$LOADER_PUBLIC_IP"; do
         remote "$host" bash -s <<STOP
 set -eu
@@ -592,6 +597,7 @@ run_one_pass() {
     local host="$LOADER_PUBLIC_IP"
 
     local wl="performance.rn"
+    local phase_table="$TABLE"
     local hot_items=""
     local hot_partitions=""
     local hot_items_per_partition=""
@@ -600,6 +606,7 @@ run_one_pass() {
 
     if is_hot_phase "$run_tag"; then
         wl="hot_partition.rn"
+        phase_table="$HOT_TABLE"
         compute_hot_keyspace_params
         hot_items="$HOT_ITEMS"
         hot_partitions="$HOT_PARTITIONS"
@@ -630,7 +637,7 @@ mkdir -p ~/output
 sudo docker run --rm --net host \
   -v "\$HOME/output:/output" \
   -e ALT_ENDPOINT="${endpoints_str}" \
-  -e TABLE=${TABLE} \
+  -e TABLE=${phase_table} \
   -e ROW_COUNT=${ROW_COUNT} \
   -e THREADS=${threads} \
   -e CONCURRENCY=${concurrency} \
@@ -670,7 +677,7 @@ mkdir -p ~/output
 sudo docker run --rm --net host \
   -v "\$HOME/output:/output" \
   -e ALT_ENDPOINT="${endpoints_str}" \
-  -e TABLE=${TABLE} \
+  -e TABLE=${phase_table} \
   -e ROW_COUNT=${ROW_COUNT} \
   -e THREADS=${threads} \
   -e CONCURRENCY=${concurrency} \
