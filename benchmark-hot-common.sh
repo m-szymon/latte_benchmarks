@@ -7,8 +7,14 @@
 : "${HOT_TRAFFIC_RATIO:=0.99}"
 : "${HOT_READ_PROPORTION:=0.3}"
 : "${HOT_UPDATE_PROPORTION:=0.7}"
-: "${HOT_COOLDOWN_SEC:=15}"
+: "${RUN_COOLDOWN_SEC:=${HOT_COOLDOWN_SEC:-15}}"
+: "${HOT_COOLDOWN_SEC:=$RUN_COOLDOWN_SEC}"
 : "${HOT_PARTITIONS:=32}"
+
+run_cooldown() {
+    log "Cooldown (${RUN_COOLDOWN_SEC}s) before next run..."
+    sleep "$RUN_COOLDOWN_SEC"
+}
 
 is_hot_phase() {
     [[ "$1" == *"-hot"* ]]

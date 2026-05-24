@@ -6,7 +6,7 @@
 #   ./aws-benchmark.sh build           # Local: docker build latte
 #   ./aws-benchmark.sh provision       # EC2: launch + setup + ship images
 #   ./aws-benchmark.sh run smoke       # Sanity check (60s, 1 rep) — validates parsers (+ hot copy)
-#   ./aws-benchmark.sh run latency     # Rate-limited comparison (120s, 2 reps) (+ hot copy)
+#   ./aws-benchmark.sh run latency     # Overload vs balanced latency (120s, 2 reps) (+ hot copy)
 #   ./aws-benchmark.sh run throughput  # Saturated comparison (120s, 2 reps, 2 inflights) (+ hot copy)
 #   ./aws-benchmark.sh teardown        # Destroy tagged instances
 #   ./aws-benchmark.sh report          # Aggregate all summary.csv tables
@@ -45,7 +45,7 @@ UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
 REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION:-uniform}"
 
 # Latte thread/concurrency: threads = min(inflight, hint), concurrency = inflight/threads
-LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-8}"
+LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-16}"
 
 # Monitoring
 MONITOR_INTERVAL=5
@@ -56,6 +56,8 @@ BENCHMARKS_DIR="${BENCHMARKS_DIR:-$SCRIPT_DIR}"
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/benchmark-results}"
 # shellcheck source=benchmark-hot-common.sh
 source "$SCRIPT_DIR/benchmark-hot-common.sh"
+# shellcheck source=benchmark-latency-common.sh
+source "$SCRIPT_DIR/benchmark-latency-common.sh"
 
 ###############################################################################
 # Internal state
@@ -710,11 +712,11 @@ LATTE_NEW_RUN
 #   tool,inflight,rate,rep,ops_per_sec,
 #   get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,
 #   agg_request_mean_ms,agg_request_p99_ms,
-#   loader_cpu_pct,scylla_cpu_pct,
+#   loader_cpu_pct,scylla_cpu_pct,scylla_max_node_cpu_avg_pct,
 #   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,
 #   scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio
 ###############################################################################
-CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
+CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_max_node_cpu_avg_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
 
 # Extract average CPU% from mpstat -P ALL log (the "all" row)
 parse_cpu_pct() {
@@ -727,13 +729,27 @@ parse_cpu_pct() {
     fi
 }
 
-# Average CPU% across all scyllaN_cpu.log files collected by collect_monitoring
+# Pooled mean CPU across all nodes and samples (legacy; understates hot-node load).
 parse_scylla_cpu_avg() {
     local out_dir="$1"
     awk '
         /^ *[0-9].*all/ { idle += $NF; n++ }
         END { if (n > 0) printf "%.1f", 100 - idle/n; else print "0" }
     ' "$out_dir"/scylla*_cpu.log 2>/dev/null || echo "0"
+}
+
+# Max of per-node time-averaged CPU (hottest node by sustained utilization).
+parse_scylla_max_node_cpu_avg() {
+    local out_dir="$1"
+    local max=0 avg=0 log
+    for log in "$out_dir"/scylla*_cpu.log; do
+        [[ -f "$log" ]] || continue
+        avg=$(parse_cpu_pct "$log")
+        if awk -v a="$avg" -v m="$max" 'BEGIN { exit !(a > m) }'; then
+            max=$avg
+        fi
+    done
+    echo "$max"
 }
 
 parse_result_line() {
@@ -744,9 +760,10 @@ parse_result_line() {
     local out_dir="$5"
 
     local rate_str="${rate_val:-unlimited}"
-    local loader_cpu scylla_cpu
+    local loader_cpu scylla_cpu scylla_max_node_cpu_avg
     loader_cpu=$(parse_cpu_pct "$out_dir/loader_cpu.log")
     scylla_cpu=$(parse_scylla_cpu_avg "$out_dir")
+    scylla_max_node_cpu_avg=$(parse_scylla_max_node_cpu_avg "$out_dir")
 
     # Scylla server-side metrics from Prometheus
     local scylla_ops="0" scylla_p99="0" scylla_reactor="0" scylla_max_node_ops="0" scylla_imbalance="0"
@@ -770,7 +787,7 @@ parse_result_line() {
         if [[ -f "$jsonfile" ]]; then
             python3 "$BENCHMARKS_DIR/analyze_latte_results.py" "$out_dir" \
                 --csv-prefix "${tool},$inflight,$rate_str,$rep" \
-                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
+                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_max_node_cpu_avg,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
         fi
     fi
 }
@@ -816,10 +833,10 @@ run_phase() {
                     echo "$line" >> "$csv"
                     echo "  >> $line"
                 fi
-                if is_hot_phase "$phase_name"; then
-                    log "Hot phase cooldown (${HOT_COOLDOWN_SEC}s)..."
-                    sleep "$HOT_COOLDOWN_SEC"
+                if is_latency_phase "$phase_name"; then
+                    validate_latency_run "$tool" "$out_dir" || true
                 fi
+                run_cooldown
                 echo
             done
         done
@@ -974,8 +991,8 @@ cmd_run() {
             RUN_DURATION_SEC=120
             WARMUP_SEC=30
             REPETITIONS=2
-            RATE=5000
-            INFLIGHT_LIST="32"
+            apply_latency_phase_defaults
+            log "Latency config: rate=$RATE inflight=$INFLIGHT_LIST threads_hint=$LATTE_THREADS_HINT"
             run_phase "latency"
             HOT_TRAFFIC_RATIO=0.99
             HOT_READ_PROPORTION=0.3
@@ -1038,7 +1055,7 @@ main() {
             echo "  1. ./aws-benchmark.sh build       # Local: docker build + pull"
             echo "  2. ./aws-benchmark.sh provision    # EC2: launch + setup"
             echo "  3. ./aws-benchmark.sh run smoke    # Validate pipeline + parsers (+ hot copy)"
-            echo "  4. ./aws-benchmark.sh run latency  # Rate-limited comparison (+ hot copy)"
+            echo "  4. ./aws-benchmark.sh run latency  # Single-node overload vs balanced (+ hot copy)"
             echo "  5. ./aws-benchmark.sh run throughput # Saturated comparison (+ hot copy)"
             echo "  6. ./aws-benchmark.sh report       # Show all results"
             echo "  7. ./aws-benchmark.sh teardown     # Destroy instances"

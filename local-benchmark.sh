@@ -6,7 +6,7 @@
 #   ./local-benchmark.sh build           # Local: docker build latte
 #   ./local-benchmark.sh provision       # Local: Start Scylla container
 #   ./local-benchmark.sh run smoke       # Sanity check (10s, 2 reps, rate 500) + hot copy
-#   ./local-benchmark.sh run latency     # Rate-limited comparison (30s, 2 reps) + hot copy
+#   ./local-benchmark.sh run latency     # Overload vs balanced latency (30s, 2 reps) + hot copy
 #   ./local-benchmark.sh run throughput  # Saturated comparison (30s base + 120s hot, 2 reps) + hot copy
 #   ./local-benchmark.sh teardown        # Stop and remove containers
 #   ./local-benchmark.sh report          # Aggregate all summary.csv tables
@@ -37,7 +37,7 @@ UPDATE_PROPORTION="${UPDATE_PROPORTION:-0.5}"
 REQUEST_DISTRIBUTION="${REQUEST_DISTRIBUTION:-uniform}"
 
 # Latte thread/concurrency: threads = min(inflight, hint), concurrency = inflight/threads
-LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-8}"
+LATTE_THREADS_HINT="${LATTE_THREADS_HINT:-16}"
 
 # Monitoring
 MONITOR_INTERVAL=5
@@ -48,6 +48,8 @@ BENCHMARKS_DIR="${BENCHMARKS_DIR:-$SCRIPT_DIR}"
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/benchmark-results-local}"
 # shellcheck source=benchmark-hot-common.sh
 source "$SCRIPT_DIR/benchmark-hot-common.sh"
+# shellcheck source=benchmark-latency-common.sh
+source "$SCRIPT_DIR/benchmark-latency-common.sh"
 
 ###############################################################################
 # Internal state
@@ -427,11 +429,11 @@ run_one_pass() {
 #   tool,inflight,rate,rep,ops_per_sec,
 #   get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,
 #   agg_request_mean_ms,agg_request_p99_ms,
-#   loader_cpu_pct,scylla_cpu_pct,
+#   loader_cpu_pct,scylla_cpu_pct,scylla_max_node_cpu_avg_pct,
 #   scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,
 #   scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio
 ###############################################################################
-CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
+CSV_HEADER="tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_max_node_cpu_avg_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio"
 
 # Extract average CPU% from docker stats log
 parse_docker_cpu() {
@@ -446,6 +448,37 @@ parse_docker_cpu() {
     fi
 }
 
+# Max of per-node time-averaged CPU (hottest node by sustained utilization).
+parse_scylla_max_node_cpu_avg() {
+    local out_dir="$1"
+    local max=0 avg=0 n log
+
+    for log in "$out_dir"/scylla*_cpu.log; do
+        [[ -f "$log" ]] || continue
+        if declare -f parse_cpu_pct &>/dev/null; then
+            avg=$(parse_cpu_pct "$log")
+        else
+            avg=$(awk '/^ *[0-9].*all/ { idle+=$NF; n++ } END { if(n>0) printf "%.1f", 100-idle/n; else print "0" }' "$log" 2>/dev/null || echo "0")
+        fi
+        if awk -v a="$avg" -v m="$max" 'BEGIN { exit !(a > m) }'; then
+            max=$avg
+        fi
+    done
+
+    if awk -v m="$max" 'BEGIN { exit !(m > 0) }'; then
+        echo "$max"
+        return
+    fi
+
+    for ((n=1; n<=SCYLLA_NODES; n++)); do
+        avg=$(parse_docker_cpu "$out_dir/docker_stats.log" "${SCYLLA_CONTAINER_PREFIX}-${n}")
+        if awk -v a="$avg" -v m="$max" 'BEGIN { exit !(a > m) }'; then
+            max=$avg
+        fi
+    done
+    echo "$max"
+}
+
 parse_result_line() {
     local tool="$1"
     local inflight="$2"
@@ -454,9 +487,10 @@ parse_result_line() {
     local out_dir="$5"
 
     local rate_str="${rate_val:-unlimited}"
-    local loader_cpu scylla_cpu
+    local loader_cpu scylla_cpu scylla_max_node_cpu_avg
     loader_cpu=$(parse_docker_cpu "$out_dir/docker_stats.log" "$LOADER_CONTAINER")
     scylla_cpu=$(parse_docker_cpu "$out_dir/docker_stats.log" "$SCYLLA_CONTAINER_PREFIX")
+    scylla_max_node_cpu_avg=$(parse_scylla_max_node_cpu_avg "$out_dir")
 
     # Scylla server-side metrics from Prometheus
     local scylla_ops="0" scylla_p99="0" scylla_reactor="0" scylla_max_node_ops="0" scylla_imbalance="0"
@@ -475,7 +509,7 @@ parse_result_line() {
         if [[ -f "$jsonfile" ]]; then
             python3 "$BENCHMARKS_DIR/analyze_latte_results.py" "$out_dir" \
                 --csv-prefix "$tool,$inflight,$rate_str,$rep" \
-                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
+                --csv-suffix "$loader_cpu,$scylla_cpu,$scylla_max_node_cpu_avg,$scylla_ops,$scylla_p99,$scylla_reactor,$scylla_max_node_ops,$scylla_imbalance"
         fi
     fi
 }
@@ -521,10 +555,10 @@ run_phase() {
                     echo "$line" >> "$csv"
                     echo "  >> $line"
                 fi
-                if is_hot_phase "$phase_name"; then
-                    log "Hot phase cooldown (${HOT_COOLDOWN_SEC}s)..."
-                    sleep "$HOT_COOLDOWN_SEC"
+                if is_latency_phase "$phase_name"; then
+                    validate_latency_run "$tool" "$out_dir" || true
                 fi
+                run_cooldown
                 echo
             done
         done
@@ -599,8 +633,8 @@ cmd_run() {
             RUN_DURATION_SEC=30
             WARMUP_SEC=10
             REPETITIONS=2
-            RATE=500
-            INFLIGHT_LIST="32"
+            apply_latency_phase_defaults
+            log "Latency config: rate=$RATE inflight=$INFLIGHT_LIST threads_hint=$LATTE_THREADS_HINT"
             run_phase "latency"
             HOT_TRAFFIC_RATIO=0.99
             HOT_READ_PROPORTION=0.3
@@ -664,7 +698,7 @@ main() {
             echo "  1. $0 build       # Local: docker build + pull"
             echo "  2. $0 provision    # Start Scylla container"
             echo "  3. $0 run smoke    # Validate pipeline + parsers (+ hot copy)"
-            echo "  4. $0 run latency  # Rate-limited comparison (+ hot copy)"
+            echo "  4. $0 run latency  # Single-node overload vs balanced (+ hot copy)"
             echo "  5. $0 run throughput # Saturated comparison (+ hot copy)"
             echo "  6. $0 report       # Show all results"
             echo "  7. $0 teardown     # Remove containers"

@@ -44,18 +44,27 @@ Hot keyspace sizing: hot items ≈ 10% of `ROW_COUNT`, spread across `HOT_PARTIT
 
 | | smoke | latency | throughput (uniform) | throughput-hot |
 |---|-------|---------|----------------------|----------------|
-| **Purpose** | Sanity check | Rate-limited compare | Saturated compare | Hot-key saturation |
+| **Purpose** | Sanity check | Single-node overload vs balanced load | Saturated compare | Hot-key saturation |
 | **Local duration** | 10s | 30s (+10s warmup) | 30s (+10s warmup) | 120s (+30s warmup) |
 | **AWS duration** | 60s | 120s (+30s warmup) | 120s (+30s warmup) | 120s (+30s warmup) |
-| **Local rate** | 500 ops/s | 500 ops/s | unlimited | unlimited |
-| **AWS rate** | 5000 ops/s | 5000 ops/s | unlimited | unlimited |
-| **Local inflight** | 16 | 32 | 64, 128 | 128, 256 |
-| **AWS inflight** | 32 | 32 | 128, 256 | 128, 256 |
+| **Local rate** | 500 ops/s | 800 ops/s | unlimited | unlimited |
+| **AWS rate** | 5000 ops/s | 70000 ops/s | unlimited | unlimited |
+| **Local inflight** | 16 | 48 | 64, 128 | 128, 256 |
+| **AWS inflight** | 32 | 256 (16×16) | 128, 256 | 128, 256 |
 | **Local rows** | 10k | 100k | 100k | 100k |
 | **AWS rows** | 100k | 1M | 1M | 1M |
 | **Reps** | 2 / 1 | 2 / 2 | 2 / 2 | 2 / 2 |
 
 Reps and row counts are **local / AWS**. Smoke-hot and latency-hot reuse the uniform timing above; only throughput-hot differs (last column). AWS hot phases pin `HOT_PARTITIONS=32`; locally they are derived from `ROW_COUNT`.
+
+### Latency phase
+
+Same offered **rate**, **inflight**, and thread layout for all drivers (`benchmark-latency-common.sh`):
+
+- **`latte`**: load skewed to one node — target **≥95%** on `scylla_max_node_cpu_avg_pct` (max of per-node **average** CPU).
+- **`latte-new-*`**: load spread — target **≤70%** max-node average CPU (**soft** WARN at 70k AWS rate; LB may exceed 70% while `latte` saturates).
+
+Use `scylla_max_node_cpu_avg_pct` in `summary.csv`, not `scylla_cpu_pct` (pooled cluster mean understates hot-node load).
 
 ## Results
 
@@ -68,7 +77,8 @@ Output goes to `benchmark-results-local/` (local) or `benchmark-results/` (AWS):
     latte_1.json
     latte_1.log
     workload_params.txt      # hot phases only
-    docker_stats.log
+    docker_stats.log         # local
+    scylla1_cpu.log          # AWS
     scylla_prometheus.log
 ```
 
@@ -86,9 +96,12 @@ python3 analyze_scylla_metrics.py benchmark-results-local/smoke/latte/inflight=1
 | `SCYLLA_NODES` | `3` | Cluster size |
 | `SCYLLA_IMAGE` | Scylla nightly `2026.1.0-dev-...` | |
 | `ALTERNATOR_WRITE_ISOLATION` | `only_rmw_uses_lwt` | |
-| `LATTE_THREADS_HINT` | `8` | threads = min(inflight, hint) |
+| `LATTE_THREADS_HINT` | `16` | threads = min(inflight, hint) |
+| `LATENCY_RATE` | `800` local / `70000` AWS | Override latency phase rate |
+| `LATENCY_INFLIGHT` | `48` local / `256` AWS | Override latency inflight |
+| `LATENCY_THREADS_HINT` | `16` | Set with latency defaults |
 | `HOT_TRAFFIC_RATIO` | `0.99` | Hot phases only |
-| `HOT_COOLDOWN_SEC` | `15` | Pause between hot tool runs |
+| `RUN_COOLDOWN_SEC` | `15` | Pause between every tool run (`HOT_COOLDOWN_SEC` is an alias) |
 | `RESULTS_DIR` | `benchmark-results-local` or `benchmark-results` | |
 
 Local-only: `SCYLLA_CPUS` (default `2`), `NETWORK_NAME` (default `latte-net`).
@@ -103,6 +116,7 @@ Run `./local-benchmark.sh` or `./aws-benchmark.sh` with no arguments for full us
 |------|------|
 | `local-benchmark.sh` / `aws-benchmark.sh` | Orchestration |
 | `benchmark-hot-common.sh` | Shared hot-phase helpers |
+| `benchmark-latency-common.sh` | Latency defaults and validation |
 | `run-latte-benchmark.sh` | Loader container entrypoint |
 | `performance.rn` / `hot_partition.rn` | Workload definitions |
 | `analyze_latte_results.py` / `analyze_scylla_metrics.py` | Result parsers |
