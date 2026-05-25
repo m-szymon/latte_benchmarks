@@ -28,7 +28,7 @@ OWNER_TAG="${OWNER_TAG:-$(aws sts get-caller-identity --query 'Arn' --output tex
 BENCH_TAG="${BENCH_TAG:-latte-bench-active}"
 
 # Instance types — single tier, proven in explore/ Phase 6
-SCYLLA_INSTANCE_TYPE="${SCYLLA_INSTANCE_TYPE:-i3.2xlarge}"
+SCYLLA_INSTANCE_TYPE="${SCYLLA_INSTANCE_TYPE:-i3.xlarge}"
 LOADER_INSTANCE_TYPE="${LOADER_INSTANCE_TYPE:-c5.4xlarge}"
 
 # Scylla cluster size
@@ -974,17 +974,25 @@ cmd_run() {
     case "$phase" in
         smoke)
             ROW_COUNT=100000
-            RUN_DURATION_SEC=60
-            WARMUP_SEC=0
+            RUN_DURATION_SEC=30
+            WARMUP_SEC=5
             REPETITIONS=1
-            RATE=5000
-            INFLIGHT_LIST="32"
-            run_phase "smoke"
-            HOT_TRAFFIC_RATIO=0.99
-            HOT_READ_PROPORTION=0.3
-            HOT_UPDATE_PROPORTION=0.7
-            HOT_PARTITIONS=32
-            run_phase_hot "smoke-hot"
+            INFLIGHT_LIST="128"
+            LATTE_THREADS_HINT=16
+            
+            for rate in 20000 30000 40000 ""; do
+                RATE="$rate"
+                local suffix=""
+                if [[ -n "$RATE" ]]; then
+                    suffix="-rate-$RATE"
+                fi
+                run_phase "smoke${suffix}"
+                HOT_TRAFFIC_RATIO=0.99
+                HOT_READ_PROPORTION=0.3
+                HOT_UPDATE_PROPORTION=0.7
+                HOT_PARTITIONS=32
+                run_phase_hot "smoke-hot${suffix}"
+            done
             ;;
         latency)
             ROW_COUNT=1000000
