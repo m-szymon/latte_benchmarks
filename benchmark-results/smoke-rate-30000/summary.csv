@@ -1,0 +1,4 @@
+tool,inflight,rate,rep,ops_per_sec,get_cycle_mean_ms,get_cycle_p99_ms,upd_cycle_mean_ms,upd_cycle_p99_ms,agg_request_mean_ms,agg_request_p99_ms,loader_cpu_pct,scylla_cpu_pct,scylla_max_node_cpu_avg_pct,scylla_ops_per_sec,scylla_p99_ms,scylla_reactor_util_pct,scylla_max_node_ops_per_sec,scylla_ops_imbalance_ratio
+latte,128,30000,1,29991.2,2.906,9.847,3.219,9.191,2.601,8.471,36.7,55.8,86.9,29167.4,6.144,85.9,29142.0,2.997
+latte-new-rr,128,30000,1,29989.3,1.690,4.805,2.495,5.394,1.727,4.743,39.0,72.5,77.0,26365.8,4.096,23.6,9408.2,1.071
+latte-new-affinity,128,30000,1,29990.8,1.721,4.952,2.533,5.444,1.760,4.833,37.6,76.8,80.7,28481.1,4.096,23.6,9613.9,1.013
