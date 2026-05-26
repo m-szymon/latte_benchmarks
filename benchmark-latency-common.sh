@@ -21,10 +21,10 @@ latency_benchmark_is_local() {
 apply_latency_phase_defaults() {
     if latency_benchmark_is_local; then
         : "${LATENCY_RATE:=800}"
-        : "${LATENCY_INFLIGHT:=48}"
+        : "${LATENCY_INFLIGHT:=32 48}"
     else
-        : "${LATENCY_RATE:=70000}"
-        : "${LATENCY_INFLIGHT:=256}"
+        : "${LATENCY_RATE:=40000}"
+        : "${LATENCY_INFLIGHT:=128 256}"
     fi
     : "${LATENCY_THREADS_HINT:=16}"
 
