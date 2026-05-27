@@ -23,7 +23,7 @@ apply_latency_phase_defaults() {
         : "${LATENCY_RATE:=800}"
         : "${LATENCY_INFLIGHT:=32 48}"
     else
-        : "${LATENCY_RATE:=40000}"
+        : "${LATENCY_RATE:=30000}"
         : "${LATENCY_INFLIGHT:=128 256}"
     fi
     : "${LATENCY_THREADS_HINT:=16}"
