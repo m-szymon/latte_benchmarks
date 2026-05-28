@@ -34,7 +34,7 @@ LOADER_INSTANCE_TYPE="${LOADER_INSTANCE_TYPE:-c5.4xlarge}"
 # Scylla cluster size
 SCYLLA_NODES="${SCYLLA_NODES:-3}"
 SCYLLA_IMAGE="${SCYLLA_IMAGE:-scylladb/scylla-nightly:2026.1.0-dev-0.20251003.20aeed160740-x86_64}"
-ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-only_rmw_uses_lwt}"
+ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-always_use_lwt}"
 
 # Workload parameters
 TABLE="${TABLE:-latte_performance}"
@@ -692,6 +692,7 @@ sudo docker run --rm --net host \
   -e LATTE_BINARY=latte-alternator-new \
   -e LB_POLICY="$lb_policy" \
   -e REQUEST_COMPRESSION="off" \
+  -e KEY_ROUTE_AFFINITY_MODE=${KEY_ROUTE_AFFINITY_MODE} \
   latte-alternator-new
 LATTE_NEW_RUN
         scp $SSH_OPTS -i "$KEY_FILE" "ubuntu@$host:~/output/latte_1.log" "$out_dir/" 2>/dev/null || true
@@ -986,7 +987,8 @@ cmd_run() {
                 if [[ -n "$RATE" ]]; then
                     suffix="-rate-$RATE"
                 fi
-                run_phase "smoke${suffix}"
+                KEY_ROUTE_AFFINITY_MODE="any-write"
+                # run_phase "smoke${suffix}"
                 HOT_TRAFFIC_RATIO=0.99
                 HOT_READ_PROPORTION=0.3
                 HOT_UPDATE_PROPORTION=0.7
@@ -1001,7 +1003,8 @@ cmd_run() {
             REPETITIONS=2
             apply_latency_phase_defaults
             log "Latency config: rate=$RATE inflight=$INFLIGHT_LIST threads_hint=$LATTE_THREADS_HINT"
-            run_phase "latency"
+            KEY_ROUTE_AFFINITY_MODE="any-write"
+            # run_phase "latency"
             HOT_TRAFFIC_RATIO=0.99
             HOT_READ_PROPORTION=0.3
             HOT_UPDATE_PROPORTION=0.7
@@ -1015,7 +1018,8 @@ cmd_run() {
             REPETITIONS=2
             RATE=""
             INFLIGHT_LIST="128 256"
-            run_phase "throughput"
+            KEY_ROUTE_AFFINITY_MODE="any-write"
+            # run_phase "throughput"
             HOT_TRAFFIC_RATIO=0.99
             HOT_READ_PROPORTION=0.3
             HOT_UPDATE_PROPORTION=0.7

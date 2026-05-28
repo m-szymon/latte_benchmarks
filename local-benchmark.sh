@@ -26,7 +26,7 @@ LOADER_CONTAINER="${LOADER_CONTAINER:-latte-loader}"
 SCYLLA_NODES="${SCYLLA_NODES:-3}"
 SCYLLA_CPUS="${SCYLLA_CPUS:-2}"
 SCYLLA_IMAGE="${SCYLLA_IMAGE:-scylladb/scylla-nightly:2026.1.0-dev-0.20251003.20aeed160740-x86_64}"
-ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-only_rmw_uses_lwt}"
+ALTERNATOR_WRITE_ISOLATION="${ALTERNATOR_WRITE_ISOLATION:-always_use_lwt}"
 
 # Workload parameters
 TABLE="${TABLE:-latte_performance}"
@@ -413,6 +413,7 @@ run_one_pass() {
           -e LATTE_BINARY=latte-alternator-new \
           -e LB_POLICY="$lb_policy" \
           -e REQUEST_COMPRESSION="off" \
+          -e KEY_ROUTE_AFFINITY_MODE="${KEY_ROUTE_AFFINITY_MODE}" \
           latte-alternator-new
     fi
 
@@ -625,7 +626,8 @@ cmd_run() {
             REPETITIONS=2
             RATE=500
             INFLIGHT_LIST="16"
-            run_phase "smoke"
+            KEY_ROUTE_AFFINITY_MODE="any-write"
+            # run_phase "smoke"
             run_phase_hot "smoke-hot"
             ;;
         latency)
@@ -635,7 +637,8 @@ cmd_run() {
             REPETITIONS=2
             apply_latency_phase_defaults
             log "Latency config: rate=$RATE inflight=$INFLIGHT_LIST threads_hint=$LATTE_THREADS_HINT"
-            run_phase "latency"
+            KEY_ROUTE_AFFINITY_MODE="any-write"
+            # run_phase "latency"
             HOT_TRAFFIC_RATIO=0.99
             HOT_READ_PROPORTION=0.3
             HOT_UPDATE_PROPORTION=0.7
@@ -648,7 +651,8 @@ cmd_run() {
             REPETITIONS=2
             RATE=""
             INFLIGHT_LIST="64 128"
-            run_phase "throughput"
+            KEY_ROUTE_AFFINITY_MODE="any-write"
+            # run_phase "throughput"
             RUN_DURATION_SEC=120
             WARMUP_SEC=30
             INFLIGHT_LIST="128 256"
